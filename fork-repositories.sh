@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Script to fork all RanvierMUD repositories to the Ranvire organization
+# Note: Only the default branch (main/master) is forked, not feature branches
 # Prerequisites: GitHub CLI (gh) must be installed and authenticated
 # Usage: ./fork-repositories.sh
 
@@ -74,6 +75,7 @@ echo "RanvierMUD Repository Forking Script"
 echo "=========================================="
 echo "Target Organization: $TARGET_ORG"
 echo "Total Repositories: $total"
+echo "Note: Only default branch (main/master) will be forked"
 echo ""
 
 # Confirmation prompt

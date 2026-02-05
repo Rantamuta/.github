@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document provides instructions for forking all RanvierMUD repositories into the Ranvire organization while preserving commit history, branches, tags, and repository structure.
+This document provides instructions for forking all RanvierMUD repositories into the Ranvire organization while preserving commit history of the main/master branch, tags, and repository structure.
 
 ## Repositories to Fork
 
@@ -150,14 +150,15 @@ For each repository listed above:
 2. Click the "Fork" button in the top-right corner
 3. Select "Ranvire" as the destination organization
 4. Keep the same repository name
-5. Ensure "Copy the main branch only" is **UNCHECKED** to preserve all branches
+5. Ensure "Copy the main branch only" is **CHECKED** (default)
 6. Click "Create fork"
 
 **Important**: This method automatically preserves:
-- Complete commit history
-- All branches
+- Complete commit history of the default branch
 - All tags
 - Repository settings (where applicable)
+
+**Note**: Feature branches are not copied - only the main/master branch is forked for maintenance purposes.
 
 ### Method 2: Using GitHub CLI (Recommended for Batch Forking)
 
@@ -209,7 +210,7 @@ repos=(
   "tiny"
 )
 
-# Fork each repository
+# Fork each repository (copies main branch only by default)
 for repo in "${repos[@]}"; do
   echo "Forking RanvierMUD/$repo to Ranvire/$repo..."
   gh repo fork "RanvierMUD/$repo" --org Ranvire --clone=false
@@ -218,6 +219,8 @@ done
 
 echo "All repositories forked successfully!"
 ```
+
+**Note**: The `gh repo fork` command automatically copies only the default branch (main/master), which is the desired behavior for Ranvire.
 
 ### Method 3: Using Git (Manual Method - Not Recommended)
 
@@ -238,28 +241,23 @@ rm -rf [repo-name].git
 
 After forking each repository, verify:
 
-1. **Commit History**: Check that all commits are present
+1. **Commit History**: Check that all commits are present on the main branch
    ```bash
-   git log --oneline --all
+   git log --oneline
    ```
 
-2. **Branches**: Verify all branches were copied
-   ```bash
-   git branch -a
-   ```
-
-3. **Tags**: Ensure all tags are present
+2. **Tags**: Ensure all tags are present
    ```bash
    git tag -l
    ```
 
-4. **License Files**: Confirm MIT license files are preserved where applicable
+3. **License Files**: Confirm MIT license files are preserved where applicable
 
 ## Post-Fork Checklist
 
 - [ ] All 30 repositories have been forked to the Ranvire organization
 - [ ] Repository descriptions are preserved
-- [ ] All branches are present in each forked repository
+- [ ] Main/master branch is present in each forked repository
 - [ ] All tags are present in each forked repository
 - [ ] Commit history is complete and unchanged
 - [ ] License files (MIT) are intact
@@ -268,6 +266,7 @@ After forking each repository, verify:
 ## Additional Notes
 
 - **No Code Changes**: These are exact forks with no modifications to code
+- **Main Branch Only**: Only the default branch (main/master) is forked; feature branches are not maintained
 - **Maintenance Work**: After forking, maintenance work can begin on the Ranvire versions
 - **Upstream Tracking**: Consider setting up upstream remotes to track the original RanvierMUD repositories if updates need to be pulled in the future
 

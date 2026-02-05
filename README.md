@@ -43,6 +43,8 @@ This fork exists to ensure continuity and maintainability over time.
 
 To establish the Ranvire organization, all RanvierMUD repositories need to be forked while preserving their complete history.
 
+**Note**: Only the main/master branch is forked from each repository. Feature branches are not maintained.
+
 **Documentation:**
 - [FORKING_INSTRUCTIONS.md](./FORKING_INSTRUCTIONS.md) - Comprehensive forking guide for all 30 repositories
 - [QUICK_REFERENCE.md](./QUICK_REFERENCE.md) - Quick start guide and command reference

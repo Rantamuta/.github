@@ -20,8 +20,10 @@ For each repository in the list:
 1. Go to: `https://github.com/RanvierMUD/[repository-name]`
 2. Click "Fork" button (top-right)
 3. Select "Ranvire" organization
-4. **IMPORTANT**: Uncheck "Copy the main branch only" to preserve all branches
+4. **IMPORTANT**: Keep "Copy the main branch only" checked (default)
 5. Click "Create fork"
+
+**Note**: Only the main/master branch will be forked. Feature branches are not needed for maintenance work.
 
 ## Repository List (Copy-Paste Ready)
 
@@ -90,14 +92,11 @@ After forking, verify a repository:
 git clone https://github.com/Ranvire/[repository-name].git
 cd [repository-name]
 
-# Check branches
-git branch -a
-
 # Check tags
 git tag -l
 
 # Check commit history
-git log --oneline --graph --all | head -20
+git log --oneline | head -20
 ```
 
 ## Troubleshooting
@@ -105,10 +104,6 @@ git log --oneline --graph --all | head -20
 ### Fork Already Exists
 If you get "repository already exists" error, the fork is complete. Verify by visiting:
 `https://github.com/Ranvire/[repository-name]`
-
-### Missing Branches
-This usually means "Copy the main branch only" was checked during forking. 
-Solution: Delete the fork and recreate with all branches.
 
 ### Authentication Issues
 ```bash

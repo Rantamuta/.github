@@ -1,7 +1,7 @@
 # Repository Forking Implementation Summary
 
 ## Objective
-Fork all 30 RanvierMUD repositories into the Ranvire organization while preserving complete commit history, all branches, all tags, and repository structure.
+Fork all 30 RanvierMUD repositories into the Ranvire organization while preserving complete commit history of the main/master branch, all tags, and repository structure.
 
 ## Deliverables
 
@@ -90,12 +90,13 @@ Follow instructions in FORKING_INSTRUCTIONS.md or QUICK_REFERENCE.md
 
 ## What Gets Preserved
 
-✅ Complete commit history
-✅ All branches
+✅ Complete commit history of the main/master branch
 ✅ All tags
 ✅ Repository structure
 ✅ License files
 ✅ Repository metadata
+
+**Note**: Only the default branch (main/master) is forked. Feature branches are not copied as they are not needed for maintenance work.
 
 ## Next Steps
 
@@ -110,6 +111,7 @@ After forking:
 
 - No code changes are made during forking
 - This is an exact replica of the RanvierMUD repositories
+- Only the main/master branch is forked; feature branches are not maintained
 - All 30 repositories are under MIT license (where specified)
 - The forked repositories will serve as the base for Ranvire maintenance work
 
