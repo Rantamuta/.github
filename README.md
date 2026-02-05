@@ -39,4 +39,22 @@ This fork exists to ensure continuity and maintainability over time.
 
 ---
 
+## Forking RanvierMUD Repositories
+
+To establish the Ranvire organization, all RanvierMUD repositories need to be forked while preserving their complete history.
+
+**Documentation:**
+- [FORKING_INSTRUCTIONS.md](./FORKING_INSTRUCTIONS.md) - Comprehensive forking guide for all 30 repositories
+- [QUICK_REFERENCE.md](./QUICK_REFERENCE.md) - Quick start guide and command reference
+- [FORKING_CHECKLIST.md](./FORKING_CHECKLIST.md) - Progress tracking checklist
+- [SUMMARY.md](./SUMMARY.md) - Implementation overview
+
+**Quick Start:**
+```bash
+# Automated forking (requires GitHub CLI)
+./fork-repositories.sh
+```
+
+---
+
 Ranvire values correctness, continuity, and understanding over novelty or velocity.
