@@ -1,18 +1,42 @@
-# .github
+# Ranvire
 
-Stewardship-focused fork of the Ranvier MUD engine, keeping it buildable and usable on modern platforms.
+Ranvire is a maintenance-focused fork of the [RanvierMUD](https://github.com/RanvierMUD) engine.
 
-## Forking RanvierMUD Repositories
+The purpose of this project is to keep Ranvier buildable, testable, and usable on modern platforms, especially modern versions of Node.js and npm, while preserving existing behavior and architecture as much as possible.
 
-This repository contains documentation and tools for forking all RanvierMUD repositories into the Ranvire organization.
+This is a stewardship effort, not a redesign.
 
-See [FORKING_INSTRUCTIONS.md](./FORKING_INSTRUCTIONS.md) for detailed instructions on forking all 30 repositories from the RanvierMUD organization while preserving commit history, branches, and tags.
+## Goals
 
-### Quick Start
+- Maintain compatibility with current Node.js runtimes and tooling
+- Keep the project buildable and testable with contemporary npm behavior
+- Establish and maintain reliable CI
+- Apply the smallest viable changes needed for long-term health
 
-```bash
-# Using the provided script (requires GitHub CLI)
-./fork-repositories.sh
-```
+## Non-Goals
 
-Or fork repositories manually using the GitHub web interface (see full documentation for details).
+- Introducing new features
+- Refactoring or modernizing code for stylistic reasons
+- Rewriting subsystems or altering core architecture
+- Changing gameplay behavior except where required for correctness
+
+## Approach
+
+Changes in Ranvire are:
+- Minimal and targeted
+- Motivated by concrete failures or incompatibilities
+- Justified by evidence (tests, CI failures, runtime behavior)
+- Kept as small and isolated as possible
+
+A green build is not considered sufficient unless the reason for the fix is understood.
+
+## Relationship to Ranvier
+
+Ranvire is derived directly from Ranvier and preserves its lineage.  
+All credit for the original design and implementation belongs to the Ranvier project and its contributors.
+
+This fork exists to ensure continuity and maintainability over time.
+
+---
+
+Ranvire values correctness, continuity, and understanding over novelty or velocity.
