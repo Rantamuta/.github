@@ -100,17 +100,17 @@ for repo in "${repos[@]}"; do
     # Check if the fork already exists
     if gh repo view "$target_repo" &> /dev/null; then
         echo -e "  ${YELLOW}→ Repository already exists: $target_repo (skipping)${NC}"
-        ((skipped++))
+        skipped=$((skipped + 1))
         continue
     fi
     
     # Fork the repository
     if gh repo fork "$source_repo" --org "$TARGET_ORG" --clone=false; then
         echo -e "  ${GREEN}✓ Successfully forked to: $target_repo${NC}"
-        ((success++))
+        success=$((success + 1))
     else
         echo -e "  ${RED}✗ Failed to fork: $source_repo${NC}"
-        ((failed++))
+        failed=$((failed + 1))
     fi
     
     # Rate limiting: wait 2 seconds between forks
