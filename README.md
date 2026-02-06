@@ -1,3 +1,4 @@
+![Ranvire Sand Castle](https://avatars.githubusercontent.com/u/259600333?s=200&v=4)
 # Ranvire
 
 Ranvire is a maintenance-focused fork of the [RanvierMUD](https://github.com/RanvierMUD) engine.
@@ -32,11 +33,10 @@ A green build is not considered sufficient unless the reason for the fix is unde
 
 ## Relationship to Ranvier
 
-Ranvire is derived directly from Ranvier and preserves its lineage.  
-All credit for the original design and implementation belongs to the Ranvier project and its contributors.
+Ranvire is derived directly from Ranvier and preserves its lineage. All credit for the original design and implementation belongs to the Ranvier project and its contributors.
 
-This fork exists to ensure continuity and maintainability over time.
+This fork exists to ensure continuity and maintainability over time. Ranvire values correctness, continuity, and understanding over novelty or velocity.
 
 ---
 
-Ranvire values correctness, continuity, and understanding over novelty or velocity.
+The Ranvire organization logo is [_sand castle_](https://thenounproject.com/icon/sand-castle-4361630/) by [Asep Yopie Hardi Noer](https://thenounproject.com/creator/sepihan/) from [Noun Project](https://thenounproject.com/browse/icons/term/sand-castle/) (CC BY 3.0)
