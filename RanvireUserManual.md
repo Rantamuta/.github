@@ -369,8 +369,9 @@ The key function is `resolvePath(config)`:
 
 * expects a `config` containing at least `{ path: string }`
 * may also use `{ bundle: string, area: string }` for template expansion
+* throws if `this.root` is unset or if `config.path` is missing
 * joins `root` + `path`
-* replaces `[BUNDLE]` and `[AREA]` tokens ([GitHub][18])
+* replaces the first `[AREA]` and first `[BUNDLE]` token (additional occurrences remain unchanged) in that joined path. ([GitHub][18])
 
 #### 5.2.2 The effective datasource interface (duck-typed)
 
@@ -383,7 +384,7 @@ In practice, a datasource must implement `hasData(config)` and may implement:
 * `replace(config, data)` → promise (write entire dataset)
 * `update(config, id, data)` → promise (write one record) ([GitHub][7])
 
-A new datasource must implement the subset actually used by the engine/components you wire it to. If you wire it to an entity loader that will call `update`, and you don’t implement `update`, the `EntityLoader` will throw at runtime. ([GitHub][7])
+A new datasource must implement the subset actually used by the engine/components you wire it to. If you omit a method and something calls it, `EntityLoader` will throw at runtime. ([GitHub][7])
 
 ### 5.3 YAML vs JSON sources (actual behavior)
 
@@ -393,6 +394,9 @@ A new datasource must implement the subset actually used by the engine/component
 * `replace` writes YAML using `yaml.dump(data)`. ([GitHub][13])
 * `fetch(id)` expects the parsed object to be keyed by id and throws `ReferenceError` if missing. ([GitHub][13])
 * `update(id, data)` loads the whole file, sets `currentData[id] = data`, and rewrites the file; if the YAML content is an array, it throws. ([GitHub][13])
+* Reads are synchronous (`fs.readFileSync(...).toString('utf8')`) even though the method returns a promise. ([GitHub][13])
+* The `hasData` check is not awaited in `fetchAll`, so a missing file results in `fs.readFileSync` throwing (e.g., `ENOENT`) rather than a custom “Invalid path” error. ([GitHub][13])
+* YAML contents are read as UTF-8 without BOM stripping. ([GitHub][13])
 
 #### 5.3.2 `JsonDataSource` (single JSON file)
 
@@ -400,6 +404,8 @@ A new datasource must implement the subset actually used by the engine/component
 * It strips a UTF‑8 BOM if present, then `JSON.parse`s the content. ([GitHub][16])
 * `replace` writes pretty JSON (`JSON.stringify(data, null, 2)`). ([GitHub][16])
 * `update` mirrors the YAML approach (load all, assign by id, rewrite). ([GitHub][16])
+* Reads are synchronous (`fs.readFileSync(...).toString('utf8')`) even though the method returns a promise. ([GitHub][16])
+* If `update` sees an array, it throws `TypeError('Yaml data stored as array, cannot update by id')` (the message is copied from the YAML implementation). ([GitHub][16])
 
 ### 5.4 Directory-backed vs single-file sources
 
@@ -407,11 +413,15 @@ A new datasource must implement the subset actually used by the engine/component
 
 * `fetchAll` reads directory entries, filters to `.yml`, and builds an object keyed by filename stem. ([GitHub][14])
 * It uses `YamlDataSource` internally with the directory path as the “root” and then loads `${id}.yml`. ([GitHub][14])
+* The `hasData` check is not awaited in `fetchAll`, so an invalid directory path is not caught before `fs.readdir` runs; any `fs.readdir` error is ignored and can surface later when iterating `files`. ([GitHub][14])
+* `update(id, data)` overwrites or creates `<id>.yml` by calling `YamlDataSource.replace` for that file; there is no `replace` method on the directory datasource itself. ([GitHub][14])
 
 #### 5.4.2 `JsonDirectoryDataSource` (directory of `*.json`)
 
 * `fetchAll` reads directory entries, filters to `.json`, and builds an object keyed by filename stem. ([GitHub][17])
 * It uses `JsonDataSource` internally with the directory path as the “root” and then loads `${id}.json`. ([GitHub][17])
+* The `hasData` check is not awaited in `fetchAll`, so an invalid directory path is not caught before `fs.readdir` runs; any `fs.readdir` error is ignored and can surface later when iterating `files`. ([GitHub][17])
+* `update(id, data)` overwrites or creates `<id>.json` by calling `JsonDataSource.replace` for that file; there is no `replace` method on the directory datasource itself. ([GitHub][17])
 
 ### 5.5 `YamlAreaDataSource`: areas as directories with `manifest.yml`
 
@@ -452,7 +462,7 @@ So the correct way to “scope” an entity loader is:
 
 In the default configuration:
 
-* Accounts and players are stored under `data/account` and `data/player` and are loaded via `JsonDirectoryDataSource`, which supports `update()` and `replace()` (writes to disk). ([GitHub][6])
+* Accounts and players are stored under `data/account` and `data/player` and are loaded via `JsonDirectoryDataSource`, which supports `update()` (writes per-record JSON files to disk). ([GitHub][6])
 * World content (areas, rooms, NPCs, items, quests, help) is stored under `bundles/…` and is loaded via YAML datasources. ([GitHub][6])
 
 Even without inspecting higher-level gameplay code, the config separation plus the fact that JSON directory datasources implement updates makes it clear why these are different categories: the “data/” subtree is positioned as mutable runtime state, while “bundles/” is positioned as authored content. ([GitHub][2])
