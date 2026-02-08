@@ -1,8 +1,8 @@
-# Ranvire User Manual
+# Rantamuta User Manual
 
 ## Initial orientation
 
-### 1) `Ranvire/ranviermud` — the runnable project (entry point)
+### 1) `Rantamuta/ranviermud` — the runnable project (entry point)
 
 This is the repository a user clones and runs. It contains:
 
@@ -13,11 +13,11 @@ This is the repository a user clones and runs. It contains:
 
 `ranviermud` depends on external packages via GitHub dependencies in `package.json`, including `ranvier`, `ranvier-datasource-file`, and `ranvier-telnet`.
 
-### 2) `Ranvire/core` — the engine library consumed by `ranviermud`
+### 2) `Rantamuta/core` — the engine library consumed by `ranviermud`
 
 This repository is the engine implementation published as the `ranvier` package. It is **not** a runnable application by itself; its exported API is built by requiring all modules under `./src/` via `require-dir`. ([GitHub][4])
 
-### 3) `Ranvire/datasource-file` — a pluggable file-backed storage backend
+### 3) `Rantamuta/datasource-file` — a pluggable file-backed storage backend
 
 This repository provides the `ranvier-datasource-file` package, exporting datasource classes such as `YamlDataSource`, `YamlAreaDataSource`, `YamlDirectoryDataSource`, and their JSON counterparts. ([GitHub][5])
 
@@ -27,9 +27,9 @@ In the default `ranviermud` configuration (`ranvier.json`), these datasources ar
 
 ## 1. Conceptual overview
 
-### What Ranvire is
+### What Rantamuta is
 
-Ranvire is a Node.js-based game server composed of:
+Rantamuta is a Node.js-based game server composed of:
 
 * a **thin runnable wrapper** (`ranviermud`) that:
 
@@ -68,7 +68,7 @@ The separation is explicit in how the wrapper builds the process:
 
 ## 2. Repository roles and responsibilities
 
-## 2.1 `Ranvire/ranviermud`
+## 2.1 `Rantamuta/ranviermud`
 
 ### What it owns
 
@@ -89,7 +89,7 @@ In `package.json`, `ranviermud` depends on:
 * `ranvier-datasource-file` (datasources)
 * `ranvier-telnet` (telnet transport implementation)
 
-## 2.2 `Ranvire/core`
+## 2.2 `Rantamuta/core`
 
 ### What it owns
 
@@ -105,7 +105,7 @@ In `package.json`, `ranviermud` depends on:
 * It does not decide *which* bundles to load; it reads the enabled list from `Config`, which is loaded by `ranviermud`. ([GitHub][8])
 * It does not bake in a single persistence system; it expects datasources and entity loaders to be configured externally and invoked through registries and `EntityLoader`. ([GitHub][2])
 
-## 2.3 `Ranvire/datasource-file`
+## 2.3 `Rantamuta/datasource-file`
 
 ### What it owns
 
@@ -126,7 +126,7 @@ In `package.json`, `ranviermud` depends on:
 
 ## 3. Runtime architecture
 
-This section follows the boot path in `Ranvire/ranvier`.
+This section follows the boot path in `Rantamuta/ranvier`.
 
 ### 3.1 Process entry and Node version gating
 
@@ -227,7 +227,7 @@ The feature paths and their load order are hard-coded in `BundleManager.loadBund
 * `player-events.js` → `loadPlayerEvents`
 * `skills/` → `loadSkills` ([GitHub][8])
 
-This is one of the most important “architectural contracts” in Ranvire: bundle authors place scripts in these conventional locations to participate in boot.
+This is one of the most important “architectural contracts” in Rantamuta: bundle authors place scripts in these conventional locations to participate in boot.
 
 ### 3.8 Server startup
 
@@ -238,7 +238,7 @@ The wrapper attaches server events and starts the server (when not in test mode)
 
 In core, `GameServer.startup()` does only one thing: emit `startup` with the commander options. ([GitHub][12])
 
-So “starting the server” in Ranvire is structurally:
+So “starting the server” in Rantamuta is structurally:
 
 * wrapper emits `startup`
 * bundles that registered “server-events” are expected to react to this event (e.g., bring up telnet/websocket transports, etc.)
@@ -274,7 +274,7 @@ This section distinguishes between:
 * **script-loaded features** (commands, server-events, etc.) loaded from bundle filesystem paths by `BundleManager`, and
 * **datasource-backed entity records** (areas, rooms, NPCs, items, quests, accounts, players, help entries) loaded through configured entity loaders.
 
-In Ranvire’s runtime wiring, an “entity” (in the persistence/config sense) is a record or collection of records addressed via an `EntityLoader` that wraps a datasource instance. ([GitHub][7])
+In Rantamuta’s runtime wiring, an “entity” (in the persistence/config sense) is a record or collection of records addressed via an `EntityLoader` that wraps a datasource instance. ([GitHub][7])
 
 ### 4.1 Entity loader categories (as configured)
 
@@ -496,7 +496,7 @@ Bundle loading is filesystem-driven and convention-driven:
 
 ### 6.2 How bundles are installed and enabled in `ranviermud`
 
-Ranvire’s tooling treats bundles as **git submodules**:
+Rantamuta’s tooling treats bundles as **git submodules**:
 
 * `util/install-bundle.js` adds a bundle as `git submodule add … bundles/<name>` and runs `npm install --no-audit` inside the bundle if it has a `package.json`. ([GitHub][3])
 * `util/remove-bundle.js` deinitializes and removes the submodule and its `.git/modules` entry. ([GitHub][19])
@@ -657,24 +657,24 @@ npm start
 
 Everything else—gameplay, commands, networking, event reactions—hangs off the bundle conventions and the runtime state object built here. ([GitHub][2])
 
-[1]: https://raw.githubusercontent.com/Ranvire/ranviermud/master/package.json "https://raw.githubusercontent.com/Ranvire/ranviermud/master/package.json"
-[2]: https://raw.githubusercontent.com/Ranvire/ranviermud/master/ranvier "https://raw.githubusercontent.com/Ranvire/ranviermud/master/ranvier"
-[4]: https://raw.githubusercontent.com/Ranvire/core/master/index.js "https://raw.githubusercontent.com/Ranvire/core/master/index.js"
-[5]: https://raw.githubusercontent.com/Ranvire/datasource-file/master/index.js "https://raw.githubusercontent.com/Ranvire/datasource-file/master/index.js"
-[6]: https://raw.githubusercontent.com/Ranvire/ranviermud/master/ranvier.json "https://raw.githubusercontent.com/Ranvire/ranviermud/master/ranvier.json"
-[7]: https://raw.githubusercontent.com/Ranvire/core/master/src/EntityLoader.js "https://raw.githubusercontent.com/Ranvire/core/master/src/EntityLoader.js"
-[8]: https://raw.githubusercontent.com/Ranvire/core/master/src/BundleManager.js "https://raw.githubusercontent.com/Ranvire/core/master/src/BundleManager.js"
-[9]: https://raw.githubusercontent.com/Ranvire/ranviermud/master/util/init-bundles.js "https://raw.githubusercontent.com/Ranvire/ranviermud/master/util/init-bundles.js"
-[10]: https://raw.githubusercontent.com/Ranvire/core/master/src/Config.js "https://raw.githubusercontent.com/Ranvire/core/master/src/Config.js"
-[11]: https://raw.githubusercontent.com/Ranvire/core/master/src/Logger.js "https://raw.githubusercontent.com/Ranvire/core/master/src/Logger.js"
-[12]: https://raw.githubusercontent.com/Ranvire/core/master/src/GameServer.js "https://raw.githubusercontent.com/Ranvire/core/master/src/GameServer.js"
-[13]: https://raw.githubusercontent.com/Ranvire/datasource-file/master/YamlDataSource.js "https://raw.githubusercontent.com/Ranvire/datasource-file/master/YamlDataSource.js"
-[14]: https://raw.githubusercontent.com/Ranvire/datasource-file/master/YamlDirectoryDataSource.js "https://raw.githubusercontent.com/Ranvire/datasource-file/master/YamlDirectoryDataSource.js"
-[15]: https://raw.githubusercontent.com/Ranvire/datasource-file/master/YamlAreaDataSource.js "https://raw.githubusercontent.com/Ranvire/datasource-file/master/YamlAreaDataSource.js"
-[16]: https://raw.githubusercontent.com/Ranvire/datasource-file/master/JsonDataSource.js "https://raw.githubusercontent.com/Ranvire/datasource-file/master/JsonDataSource.js"
-[17]: https://raw.githubusercontent.com/Ranvire/datasource-file/master/JsonDirectoryDataSource.js "https://raw.githubusercontent.com/Ranvire/datasource-file/master/JsonDirectoryDataSource.js"
-[18]: https://raw.githubusercontent.com/Ranvire/datasource-file/master/FileDataSource.js "https://raw.githubusercontent.com/Ranvire/datasource-file/master/FileDataSource.js"
-[19]: https://raw.githubusercontent.com/Ranvire/ranviermud/master/util/remove-bundle.js "https://raw.githubusercontent.com/Ranvire/ranviermud/master/util/remove-bundle.js"
-[20]: https://raw.githubusercontent.com/Ranvire/ranviermud/master/util/update-bundle-url.js "https://raw.githubusercontent.com/Ranvire/ranviermud/master/util/update-bundle-url.js"
-[21]: https://github.com/Ranvire/core "https://github.com/Ranvire/core"
-[22]: https://raw.githubusercontent.com/Ranvire/ranviermud/master/util/smoke-login.js "https://raw.githubusercontent.com/Ranvire/ranviermud/master/util/smoke-login.js"
+[1]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/package.json "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/package.json"
+[2]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/ranvier "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/ranvier"
+[4]: https://raw.githubusercontent.com/Rantamuta/core/master/index.js "https://raw.githubusercontent.com/Rantamuta/core/master/index.js"
+[5]: https://raw.githubusercontent.com/Rantamuta/datasource-file/master/index.js "https://raw.githubusercontent.com/Rantamuta/datasource-file/master/index.js"
+[6]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/ranvier.json "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/ranvier.json"
+[7]: https://raw.githubusercontent.com/Rantamuta/core/master/src/EntityLoader.js "https://raw.githubusercontent.com/Rantamuta/core/master/src/EntityLoader.js"
+[8]: https://raw.githubusercontent.com/Rantamuta/core/master/src/BundleManager.js "https://raw.githubusercontent.com/Rantamuta/core/master/src/BundleManager.js"
+[9]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/init-bundles.js "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/init-bundles.js"
+[10]: https://raw.githubusercontent.com/Rantamuta/core/master/src/Config.js "https://raw.githubusercontent.com/Rantamuta/core/master/src/Config.js"
+[11]: https://raw.githubusercontent.com/Rantamuta/core/master/src/Logger.js "https://raw.githubusercontent.com/Rantamuta/core/master/src/Logger.js"
+[12]: https://raw.githubusercontent.com/Rantamuta/core/master/src/GameServer.js "https://raw.githubusercontent.com/Rantamuta/core/master/src/GameServer.js"
+[13]: https://raw.githubusercontent.com/Rantamuta/datasource-file/master/YamlDataSource.js "https://raw.githubusercontent.com/Rantamuta/datasource-file/master/YamlDataSource.js"
+[14]: https://raw.githubusercontent.com/Rantamuta/datasource-file/master/YamlDirectoryDataSource.js "https://raw.githubusercontent.com/Rantamuta/datasource-file/master/YamlDirectoryDataSource.js"
+[15]: https://raw.githubusercontent.com/Rantamuta/datasource-file/master/YamlAreaDataSource.js "https://raw.githubusercontent.com/Rantamuta/datasource-file/master/YamlAreaDataSource.js"
+[16]: https://raw.githubusercontent.com/Rantamuta/datasource-file/master/JsonDataSource.js "https://raw.githubusercontent.com/Rantamuta/datasource-file/master/JsonDataSource.js"
+[17]: https://raw.githubusercontent.com/Rantamuta/datasource-file/master/JsonDirectoryDataSource.js "https://raw.githubusercontent.com/Rantamuta/datasource-file/master/JsonDirectoryDataSource.js"
+[18]: https://raw.githubusercontent.com/Rantamuta/datasource-file/master/FileDataSource.js "https://raw.githubusercontent.com/Rantamuta/datasource-file/master/FileDataSource.js"
+[19]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/remove-bundle.js "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/remove-bundle.js"
+[20]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/update-bundle-url.js "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/update-bundle-url.js"
+[21]: https://github.com/Rantamuta/core "https://github.com/Rantamuta/core"
+[22]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/smoke-login.js "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/smoke-login.js"
