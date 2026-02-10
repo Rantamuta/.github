@@ -229,6 +229,35 @@ The feature paths and their load order are hard-coded in `BundleManager.loadBund
 
 This is one of the most important “architectural contracts” in Rantamuta: bundle authors place scripts in these conventional locations to participate in boot.
 
+### Conflict Resolution and Override Rules
+
+Bundle load order determines how conflicts are resolved when multiple bundles register the same name. There are two patterns:
+
+**Map-based registries (last bundle wins):**
+
+These registries use `Map.set(...)`. If two bundles register the same key, the later bundle in `Config.get('bundles')` overrides the earlier one.
+
+* Commands (`CommandManager`)
+* Channels (`ChannelManager`)
+* Skills/Spells (`SkillManager`, `SpellManager`)
+* Effects (`EffectFactory`)
+* Attributes (`AttributeFactory`)
+* Help files (`HelpManager`)
+* Quests (`QuestFactory`)
+
+**Event-based registries (additive listeners):**
+
+These registries use `EventManager.add(...)`. If multiple bundles register the same event name, **all** listeners are attached and run in registration order.
+
+* Behaviors (`BehaviorManager` for area/npc/item/room)
+* Input events (`InputEventManager`)
+* Player events (`PlayerManager.events`)
+* Server events (`ServerEventManager`)
+
+**Config-driven behavior:**
+
+Some “conflicts” are not bundle-defined at all and are resolved by config keys (e.g., `startingRoom`).
+
 ### 3.8 Server startup
 
 The wrapper attaches server events and starts the server (when not in test mode):
