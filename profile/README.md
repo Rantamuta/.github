@@ -1,4 +1,5 @@
 ![Rantamuta Sand Castle](https://avatars.githubusercontent.com/u/259600333?s=200&v=4)
+
 # Rantamuta
 
 Rantamuta is a maintenance-focused fork of the RanvierMUD engine.
@@ -6,6 +7,10 @@ Rantamuta is a maintenance-focused fork of the RanvierMUD engine.
 The goal of this project is to keep Ranvier buildable, testable, and usable on modern platforms, particularly current versions of Node.js and npm, while preserving existing behavior and architecture as closely as possible.
 
 This is a stewardship effort, not a redesign.
+
+## Documents
+
+- [RantaMutaUserManual.md](../docs/RantamutaUserManual.md)
 
 ## Goals
 
@@ -24,6 +29,7 @@ This is a stewardship effort, not a redesign.
 ## Approach
 
 Changes in Rantamuta are:
+
 - Minimal and targeted
 - Driven by concrete failures or incompatibilities
 - Justified by evidence (tests, CI failures, runtime behavior)
@@ -40,6 +46,7 @@ Upstream maintainers are welcome to pull changes from this fork. Assistance is a
 ## Audience
 
 Rantamuta is primarily for:
+
 - Developers who want a maintained RanvierMUD codebase
 - People comfortable reading code and making their own modifications
 - Users who value stability over novelty
