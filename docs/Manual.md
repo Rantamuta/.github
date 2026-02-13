@@ -1,4 +1,4 @@
-# Rantamuta User Manual
+# Rantamuta Maintainer Manual
 
 ## Initial orientation
 

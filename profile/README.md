@@ -10,7 +10,7 @@ This is a stewardship effort, not a redesign.
 
 ## Documents
 
-- [RantaMutaUserManual.md](../docs/RantamutaUserManual.md)
+- [Rantamuta Maintainer Manual](../docs/Manual.md) - Developer/maintainer reference covering architecture and runtime behavior across ranviermud, core, and datasource-file, including boot flow, entity/data loading, bundle contracts, and maintenance workflows.
 
 ## Goals
 
