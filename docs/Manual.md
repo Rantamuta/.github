@@ -94,11 +94,13 @@ In `package.json`, `ranviermud` depends on:
 ### What it owns
 
 * **Engine API surface** exported from `index.js` via `require-dir('./src/')`. ([GitHub][4])
-* **Minimal Config wrapper**: `Config.load(data)` stores the config object, and `Config.get(key, fallback)` reads from that cache. (No merging, validation, or deep resolution is performed by `Config` itself.) ([GitHub][10])
+* **Published type declarations**: the package publishes concrete declarations at `types/index.d.ts` and keeps CommonJS consumer compatibility (`export =`) while exposing `Ranvier` as a namespace for tooling. ([GitHub][23]) ([GitHub][24])
+* **Minimal Config wrapper**: `Config.load(data)` stores the config object, and `Config.get(key, fallback)` reads from that cache. If `get` is called before `load`, it throws `ConfigNotLoadedError`. (No merging, validation, or deep resolution is performed by `Config` itself.) ([GitHub][10])
 * **Logging wrapper**: `Logger` wraps Winston and provides `log`, `error`, `warn`, `verbose`, plus optional file logging and pretty errors. ([GitHub][11])
 * **Entity loader abstraction**: `EntityLoader` is a thin wrapper around a datasource instance + loader config, providing `setArea`, `setBundle`, and CRUD-ish methods that delegate to the datasource if implemented. ([GitHub][7])
 * **Bundle loading convention**: `BundleManager` discovers enabled bundles and loads features from well-known paths within each bundle (commands, behaviors, server-events, etc.), then loads areas and help and “distributes” areas into the `AreaManager`. ([GitHub][8])
 * **Server startup surface**: `GameServer` is an `EventEmitter` that (in the core itself) only emits `startup` and `shutdown` events. This is the extension point bundles attach to (via “server events”). ([GitHub][12])
+* **Type regression checks**: `npm run typecheck` validates the published declaration surface, including a CommonJS consumer fixture. ([GitHub][23]) ([GitHub][25]) ([GitHub][26])
 
 ### What it deliberately does not own
 
@@ -206,10 +208,10 @@ await BundleManager.loadBundles();
 
 `BundleManager.loadBundles()`:
 
-* enumerates directories under the bundles path
-* skips non-directories and `.`/`..`
-* **only loads bundles whose directory name is present in `Config.get('bundles', [])`** (from `ranvier.conf.js` if present, otherwise `ranvier.json`)
-* **loads enabled bundles in the exact order they appear in the `bundles` array**
+* reads `Config.get('bundles', [])` and iterates bundle names in that exact configured order
+* de-duplicates configured names while preserving first-seen order
+* skips invalid names (`.` and `..`)
+* validates configured bundle paths and skips missing/non-directory entries with warnings
 * for each loaded bundle, it loads a fixed set of “features” if their expected path exists, then loads areas and help
 * after all bundles load, it validates attributes (`AttributeFactory.validateAttributes()`)
 * and then “distributes” loaded area references: it creates each area, hydrates it, and registers it with `AreaManager`. ([GitHub][2])
@@ -232,32 +234,29 @@ This is one of the most important “architectural contracts” in Rantamuta: bu
 
 ### Conflict Resolution and Override Rules
 
-Bundle load order determines how conflicts are resolved when multiple bundles register the same name. There are two patterns:
+`BundleManager` has two conflict modes based on `Config.get('strictMode', false)`. ([GitHub][8])
 
-**Map-based registries (last bundle wins):**
+**Non-strict mode (`strictMode: false`, default):**
 
-These registries use `Map.set(...)`. If two bundles register the same key, the later bundle in `Config.get('bundles')` (from `ranvier.conf.js` or `ranvier.json`) overrides the earlier one.
+* Most map-backed registries are overwrite-on-set, so later bundles override earlier bundles for the same key:
+  * Commands (`CommandManager`)
+  * Channels (`ChannelManager`)
+  * Skills/Spells (`SkillManager`, `SpellManager`)
+  * Attributes (`AttributeFactory`)
+  * Help files (`HelpManager`)
+  * Quests (`QuestFactory`)
+* Effects are different: `EffectFactory.add` ignores duplicate effect ids, so first registration wins. ([GitHub][8]) ([GitHub][30])
+* Event-based registries are additive: multiple listeners for the same event all run in registration order.
 
-* Commands (`CommandManager`)
-* Channels (`ChannelManager`)
-* Skills/Spells (`SkillManager`, `SpellManager`)
-* Effects (`EffectFactory`)
-* Attributes (`AttributeFactory`)
-* Help files (`HelpManager`)
-* Quests (`QuestFactory`)
+**Strict mode (`strictMode: true`):**
 
-**Event-based registries (additive listeners):**
-
-These registries use `EventManager.add(...)`. If multiple bundles register the same event name, **all** listeners are attached and run in registration order.
-
-* Behaviors (`BehaviorManager` for area/npc/item/room)
-* Input events (`InputEventManager`)
-* Player events (`PlayerManager.events`)
-* Server events (`ServerEventManager`)
+* Cross-bundle duplicate registrations in guarded registries throw and fail bundle load.
+* The guard applies to command keys/aliases, channel keys/aliases, skill/spell ids, effect ids, attribute names, help names, quest ids, quest-goal names, quest-reward names, and loaded area/entity definition keys.
+* Duplicate registration of the same key by the same bundle is allowed by the strict duplicate guard.
 
 **Config-driven behavior:**
 
-Some “conflicts” are not bundle-defined at all and are resolved by config keys (e.g., `startingRoom`).
+* Some “conflicts” are config-defined rather than bundle-defined (e.g., `startingRoom`).
 
 ### 3.8 Server startup
 
@@ -366,6 +365,11 @@ The default configuration makes a strong separation:
 
 * **World content** (areas, rooms, NPCs, items, quests, help) is stored under `bundles/...` paths and is loaded from YAML files (or directories of YAML) via `Yaml*` datasources. ([GitHub][6]).
 * **Accounts** and **players** are stored under `data/account` and `data/player` and are loaded from JSON directories via `JsonDirectoryDataSource`. ([GitHub][6]).
+
+### 4.6 Known runtime semantics and sharp edges
+
+* `AreaFloor` accepts negative coordinates and currently stores coordinates using an array-backed structure indexed as `map[x][y]`. This works because arrays are objects in JavaScript, but negative coordinates are stored as signed keys rather than true array indexes. ([GitHub][27]) ([GitHub][28])
+* Room door state is not normalized on load. For a door that exists but omits `locked`, `Room.isDoorLocked(fromRoom)` returns `undefined`; if the door does not exist, it returns `false`. Consumers should treat door lock state as effectively tri-state (`true | false | undefined`). ([GitHub][29])
 
 ---
 
@@ -520,8 +524,8 @@ To implement a new datasource compatible with this ecosystem:
 
 Bundle loading is filesystem-driven and convention-driven:
 
-* `BundleManager` scans the bundles directory.
-* It checks whether each directory name is enabled in config.
+* `BundleManager` iterates configured bundle names from `Config.get('bundles', [])`.
+* It validates each configured bundle path and skips invalid entries with warnings.
 * It loads known features based on the presence of specific files/directories. ([GitHub][8])
 
 ### 6.2 How bundles are installed and enabled in `ranviermud`
@@ -689,6 +693,7 @@ Everything else—gameplay, commands, networking, event reactions—hangs off th
 
 [1]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/package.json "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/package.json"
 [2]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/ranvier "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/ranvier"
+[3]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/install-bundle.js "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/install-bundle.js"
 [4]: https://raw.githubusercontent.com/Rantamuta/core/master/index.js "https://raw.githubusercontent.com/Rantamuta/core/master/index.js"
 [5]: https://raw.githubusercontent.com/Rantamuta/datasource-file/master/index.js "https://raw.githubusercontent.com/Rantamuta/datasource-file/master/index.js"
 [6]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/ranvier.json "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/ranvier.json"
@@ -708,3 +713,11 @@ Everything else—gameplay, commands, networking, event reactions—hangs off th
 [20]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/update-bundle-url.js "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/update-bundle-url.js"
 [21]: https://github.com/Rantamuta/core "https://github.com/Rantamuta/core"
 [22]: https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/smoke-login.js "https://raw.githubusercontent.com/Rantamuta/ranviermud/master/util/smoke-login.js"
+[23]: https://raw.githubusercontent.com/Rantamuta/core/master/package.json "https://raw.githubusercontent.com/Rantamuta/core/master/package.json"
+[24]: https://raw.githubusercontent.com/Rantamuta/core/master/types/index.d.ts "https://raw.githubusercontent.com/Rantamuta/core/master/types/index.d.ts"
+[25]: https://raw.githubusercontent.com/Rantamuta/core/master/tsconfig.types.json "https://raw.githubusercontent.com/Rantamuta/core/master/tsconfig.types.json"
+[26]: https://raw.githubusercontent.com/Rantamuta/core/master/test/types/cjs-consumer.ts "https://raw.githubusercontent.com/Rantamuta/core/master/test/types/cjs-consumer.ts"
+[27]: https://raw.githubusercontent.com/Rantamuta/core/master/src/AreaFloor.js "https://raw.githubusercontent.com/Rantamuta/core/master/src/AreaFloor.js"
+[28]: https://raw.githubusercontent.com/Rantamuta/core/master/test/unit/AreaFloor.js "https://raw.githubusercontent.com/Rantamuta/core/master/test/unit/AreaFloor.js"
+[29]: https://raw.githubusercontent.com/Rantamuta/core/master/src/Room.js "https://raw.githubusercontent.com/Rantamuta/core/master/src/Room.js"
+[30]: https://raw.githubusercontent.com/Rantamuta/core/master/src/EffectFactory.js "https://raw.githubusercontent.com/Rantamuta/core/master/src/EffectFactory.js"
