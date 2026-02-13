@@ -208,7 +208,8 @@ await BundleManager.loadBundles();
 
 * enumerates directories under the bundles path
 * skips non-directories and `.`/`..`
-* **only loads bundles whose directory name is present in `Config.get('bundles', [])`**
+* **only loads bundles whose directory name is present in `Config.get('bundles', [])`** (from `ranvier.conf.js` if present, otherwise `ranvier.json`)
+* **loads enabled bundles in the exact order they appear in the `bundles` array**
 * for each loaded bundle, it loads a fixed set of “features” if their expected path exists, then loads areas and help
 * after all bundles load, it validates attributes (`AttributeFactory.validateAttributes()`)
 * and then “distributes” loaded area references: it creates each area, hydrates it, and registers it with `AreaManager`. ([GitHub][2])
@@ -235,7 +236,7 @@ Bundle load order determines how conflicts are resolved when multiple bundles re
 
 **Map-based registries (last bundle wins):**
 
-These registries use `Map.set(...)`. If two bundles register the same key, the later bundle in `Config.get('bundles')` overrides the earlier one.
+These registries use `Map.set(...)`. If two bundles register the same key, the later bundle in `Config.get('bundles')` (from `ranvier.conf.js` or `ranvier.json`) overrides the earlier one.
 
 * Commands (`CommandManager`)
 * Channels (`ChannelManager`)
