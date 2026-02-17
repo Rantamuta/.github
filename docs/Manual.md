@@ -50,12 +50,12 @@ Rantamuta is a Node.js-based game server composed of:
   * and an event-emitting “server” surface that bundles can attach to. ([GitHub][4])
 * **storage backends** (e.g., `datasource-file`) that implement CRUD-style access to entity records, and are selected/configured entirely via `ranvier.json`. ([GitHub][6])
 
-### NB
+#### NB
 
 * The process entry point for `ranviermud` is `./ranvier` (not the `ranvier` dependency itself). The wrapper loads the dependency via `require('ranvier')`.
 * A datasource is **not** the engine’s persistence layer; it is a pluggable adapter selected by configuration and invoked through `EntityLoader`. ([GitHub][7])
 
-### Architectural separation of concerns
+#### Architectural separation of concerns
 
 The separation is explicit in how the wrapper builds the process:
 
@@ -68,20 +68,20 @@ The separation is explicit in how the wrapper builds the process:
 
 ## 2. Repository roles and responsibilities
 
-## 2.1 `Rantamuta/ranviermud`
+### 2.1 `Rantamuta/ranviermud`
 
-### What it owns
+#### What it owns
 
 * **Process entry and boot**: `./ranvier` performs Node version gating, config selection, logger setup, global state construction, registry initialization, bundle loading, and server startup/ticks.
 * **Project-level configuration**: `ranvier.json` defines enabled bundles, datasource registrations, and entity loader wiring (plus other settings like `startingRoom`, name length constraints, etc.).
 * **Bundle management tooling**: scripts under `util/` manage bundles as git submodules and update `ranvier.json`.
 
-### What it deliberately does not own
+#### What it deliberately does not own
 
 * Engine subsystem implementations live in the external dependency `ranvier`.
 * Datasource implementations live in external dependencies such as `ranvier-datasource-file`.
 
-### How it depends on the others
+#### How it depends on the others
 
 In `package.json`, `ranviermud` depends on:
 
@@ -89,9 +89,9 @@ In `package.json`, `ranviermud` depends on:
 * `ranvier-datasource-file` (datasources)
 * `ranvier-telnet` (telnet transport implementation)
 
-## 2.2 `Rantamuta/core`
+### 2.2 `Rantamuta/core`
 
-### What it owns
+#### What it owns
 
 * **Engine API surface** exported from `index.js` via `require-dir('./src/')`. ([GitHub][4])
 * **Published type declarations**: the package publishes concrete declarations at `types/index.d.ts` and keeps CommonJS consumer compatibility (`export =`) while exposing `Ranvier` as a namespace for tooling. ([GitHub][23]) ([GitHub][24])
@@ -102,14 +102,14 @@ In `package.json`, `ranviermud` depends on:
 * **Server startup surface**: `GameServer` is an `EventEmitter` that (in the core itself) only emits `startup` and `shutdown` events. This is the extension point bundles attach to (via “server events”). ([GitHub][12])
 * **Type regression checks**: `npm run typecheck` validates the published declaration surface, including a CommonJS consumer fixture. ([GitHub][23]) ([GitHub][25]) ([GitHub][26])
 
-### What it deliberately does not own
+#### What it deliberately does not own
 
 * It does not decide *which* bundles to load; it reads the enabled list from `Config`, which is loaded by `ranviermud`. ([GitHub][8])
 * It does not bake in a single persistence system; it expects datasources and entity loaders to be configured externally and invoked through registries and `EntityLoader`. ([GitHub][2])
 
-## 2.3 `Rantamuta/datasource-file`
+### 2.3 `Rantamuta/datasource-file`
 
-### What it owns
+#### What it owns
 
 * Concrete datasource implementations for file-backed storage:
 
@@ -120,7 +120,7 @@ In `package.json`, `ranviermud` depends on:
   * JSON directory-of-entities: `JsonDirectoryDataSource` ([GitHub][17])
 * A common `FileDataSource` base that implements template resolution (`[BUNDLE]`, `[AREA]`) and root-relative path joining. ([GitHub][18])
 
-### What it deliberately does not own
+#### What it deliberately does not own
 
 * It does not know about Ranvier “managers”, “areas”, or “bundles” beyond the string-token substitution it performs. Those higher-level meanings are owned by the engine and bundle loader. ([GitHub][18])
 
@@ -232,7 +232,7 @@ The feature paths and their load order are hard-coded in `BundleManager.loadBund
 
 This is one of the most important “architectural contracts” in Rantamuta: bundle authors place scripts in these conventional locations to participate in boot.
 
-### Conflict Resolution and Override Rules
+#### Conflict Resolution and Override Rules
 
 `BundleManager` has two conflict modes based on `Config.get('strictMode', false)`. ([GitHub][8])
 
@@ -560,6 +560,231 @@ Within an enabled bundle directory, `BundleManager` conditionally loads features
 * `skills/` ([GitHub][8])
 
 This list (and its order) is the authoritative “bundle API surface” for startup contributions.
+
+#### Quest Rewards
+
+Quest rewards are a registry-driven extension mechanism for post-completion quest effects. Core provides the lifecycle hooks, registration plumbing, and dispatch semantics; bundle content provides concrete reward implementations.
+
+At runtime, reward execution sits on the quest completion path in `QuestFactory` and is type-resolved from `QuestRewardManager`. The manager itself is a simple `Map` keyed by reward type name.
+
+##### 1. Core components and contracts
+
+Core classes:
+
+* `QuestReward` (`node_modules/ranvier/src/QuestReward.js`)
+  * abstract extension contract with static methods:
+    * `reward(GameState, quest, config, player)`
+    * `display(GameState, quest, config, player)`
+* `QuestRewardManager` (`node_modules/ranvier/src/QuestRewardManager.js`)
+  * `class QuestRewardManager extends Map {}`
+  * key: reward type string
+  * value: reward class/type object used at completion time
+* `QuestFactory` (`node_modules/ranvier/src/QuestFactory.js`)
+  * consumes quest `rewards` config and invokes reward handlers on completion
+
+Quest data contract (TypeScript surface):
+
+* In `Quest` config, `rewards` is optional and shaped as:
+  * `rewards?: Array<{ type: string, config: Record<string, unknown> }>`
+* Declared in `node_modules/ranvier/types/Quest.d.ts`.
+
+Interpretation:
+
+* `type` selects a registered reward implementation from `QuestRewardManager`.
+* `config` is reward-type-specific payload, passed through untouched by core.
+
+##### 2. Bundle module shape and import semantics
+
+Reward modules are loaded from bundle path `quest-rewards/` by `BundleManager.loadQuestRewards`.
+
+Accepted export forms are intentionally flexible:
+
+* Direct class export (expected to be a `QuestReward` subclass).
+* Loader-function export: `module.exports = (srcPath) => RewardClass`.
+
+Resolution logic (from `BundleManager`):
+
+* `const loader = require(rewardPath)`
+* `rewardImport = QuestReward.isPrototypeOf(loader) ? loader : loader(srcPath)`
+* `QuestRewardManager.set(rewardName, rewardImport)`
+
+Implications:
+
+* `srcPath`-style legacy loaders remain supported.
+* Core does not strongly validate that `rewardImport` is a strict `QuestReward` subclass after resolution.
+* The runtime assumption is only that resolved import has callable static hooks used by quest flows.
+
+##### 3. Registration and keying rules
+
+Type key derivation:
+
+* Reward type key is filename basename (without extension) in `quest-rewards/`.
+* Example: `quest-rewards/xp.js` registers type `xp`.
+
+Script file filter:
+
+* Uses `Data.isScriptFile(path, file)` which checks:
+  * filesystem entry is a file
+  * filename matches `/js$/`
+* Non-JS files in `quest-rewards/` are ignored.
+
+Namespace model:
+
+* Registry is global for booted `GameState`, across all enabled bundles.
+* Type collisions therefore cross bundle boundaries unless isolated by naming conventions and/or strict mode.
+
+##### 4. Load order and when rewards become available
+
+Per bundle feature order in `BundleManager.loadBundle` is fixed:
+
+1. `quest-goals/`
+2. `quest-rewards/`
+3. `attributes.js`
+4. `behaviors/`
+5. `channels.js`
+6. `commands/`
+7. `effects/`
+8. `input-events/`
+9. `server-events/`
+10. `player-events.js`
+11. `skills/`
+12. areas and help load afterward
+
+Why this matters:
+
+* Quest goals/rewards are loaded before area quest definitions are read.
+* Quest records loaded from datasource-backed `quests.yml` can safely reference reward types already registered by feature-load phase.
+
+##### 5. Where quest reward config comes from
+
+Quest definitions are not loaded from `quest-rewards/`; they are loaded through entity loaders.
+
+In the default wrapper wiring (`ranvier.json` + `EntityLoaderRegistry`):
+
+* `quests` loader path is `bundles/[BUNDLE]/areas/[AREA]/quests.yml`.
+* During area load, `BundleManager.loadQuests(bundle, areaName)` reads quest records and registers them in `QuestFactory`.
+
+So there are two distinct channels:
+
+* `quest-rewards/` provides reward *types* (code modules).
+* `areas/*/quests.yml` provides reward *instances/configs* (`type` + `config` per quest).
+
+##### 6. Runtime execution lifecycle
+
+Quest lifecycle path (relevant to rewards):
+
+* `QuestFactory.create(...)` wires event listeners onto quest instances.
+* On `complete` event:
+  1. `player.emit('questComplete', instance)`
+  2. `player.questTracker.complete(instance.entityReference)`
+  3. reward loop executes `quest.config.rewards` (if present)
+  4. each reward resolves by type from `QuestRewardManager`
+  5. `rewardClass.reward(GameState, instance, reward.config, player)` called
+  6. `player.emit('questReward', reward)` emitted for each successful reward dispatch
+  7. `player.save()` called once after reward loop completes
+
+Additional ordering detail:
+
+* In `Quest.complete()`, quest emits `complete` before calling each goal’s `goal.complete()` cleanup hook.
+* Reward side effects therefore occur before goal cleanup methods run.
+
+##### 7. Events and observability
+
+Core events exposed to downstream systems:
+
+* `questComplete(instance)` on player
+* `questReward(reward)` on player for each dispatched reward config entry
+
+Important payload notes:
+
+* `questReward` event payload is the reward config object from quest definition (`{ type, config }`), not the return value of reward handler and not a normalized reward result object.
+* Reward execution is side-effect driven; no standardized return channel exists in core.
+
+##### 8. Strict mode and duplicate protection
+
+Duplicate registration behavior is controlled by `Config.get('strictMode', false)` as consumed by `BundleManager`.
+
+Non-strict mode (`false`, default):
+
+* `Map.set` semantics apply.
+* Later bundle registration for same reward key overwrites earlier entry.
+
+Strict mode (`true`):
+
+* `_registerOrThrow('QuestRewardManager', rewardName, bundle, rewardPath)` rejects cross-bundle duplicate keys.
+* Startup fails fast with duplicate-registration error indicating registry, key, and conflicting bundles.
+
+This behavior is covered by strict-mode unit tests in `node_modules/ranvier/test/unit/BundleManagerStrictMode.js`.
+
+##### 9. `display(...)` semantics (and non-semantics)
+
+`QuestReward` defines both:
+
+* static `reward(...)`
+* static `display(...)`
+
+Core currently only invokes `reward(...)` in completion flow.
+
+Observations:
+
+* There are no core callsites that invoke `QuestReward.display(...)`.
+* `display(...)` is therefore a bundle/UI-layer extension hook and not part of core completion semantics.
+* If a quest command/log UI wants human-readable reward previews, that layer must explicitly call `display(...)`.
+
+##### 10. Error handling, fault isolation, and persistence behavior
+
+Within reward loop (`QuestFactory`):
+
+* Invalid reward type (`QuestRewardManager.get(type)` missing) throws an internal error caught by loop.
+* Any reward handler exception is caught and logged through `Logger.error`.
+* Loop continues to subsequent rewards after an error (best-effort dispatch).
+* Player save still executes once after loop completion.
+
+Consequences:
+
+* Partial reward application is possible: earlier rewards may apply, later one fails, quest still marked complete.
+* No built-in transactional rollback across multi-reward sets.
+* Error handling is log-based; no automatic compensating actions.
+
+##### 11. Concurrency and sync/async assumptions
+
+Reward dispatch callsite does not `await`:
+
+* `rewardClass.reward(...)` is called synchronously.
+* If reward implementation returns a Promise, core does not await or handle Promise rejection at callsite.
+
+Practical expectation for reward authors:
+
+* Implement reward handlers as synchronous, deterministic side-effect functions where possible.
+* If async behavior is unavoidable, implement explicit internal error handling in reward code and do not rely on core awaiting completion.
+
+##### 12. Boot wiring and availability boundaries
+
+`GameState.QuestRewardManager` is instantiated during wrapper boot before bundle loading:
+
+* wrapper constructs managers (`QuestFactory`, `QuestGoalManager`, `QuestRewardManager`)
+* then `BundleManager.loadBundles()` populates reward registry from bundle filesystem
+
+Therefore:
+
+* Reward types are runtime-load-time artifacts, not compile-time constants.
+* Missing `quest-rewards/` directory in a bundle is valid (no registration happens).
+* Presence of quest reward configs in quests without matching registered reward type causes runtime quest completion errors for those entries.
+
+##### 13. Gotchas and sharp edges
+
+1. `display(...)` is not executed by core.
+2. Reward type key is filename-derived; renaming files changes quest config compatibility.
+3. Non-strict mode allows silent overwrite of reward type implementations across bundles.
+4. Strict mode converts cross-bundle duplicate reward keys into startup failure.
+5. Core does not guarantee import type safety beyond callability at use site.
+6. Reward loop is best-effort and non-transactional; partial grants can occur.
+7. Quest completion is marked before reward dispatch, so failed rewards do not prevent completion status.
+8. Reward callsite is synchronous and non-awaited; Promise-returning handlers are not lifecycle-managed by core.
+9. `questReward` player event emits authored config entry, not normalized post-grant result.
+10. Reward implementations are global in `GameState`; naming discipline is required in multi-bundle deployments.
+11. Missing `quest-rewards/` directory is not itself an error and can hide authoring omissions until quest completion path is hit.
+12. Since reward behavior is code-driven, behavior changes are compatibility-relevant even when quest YAML is unchanged.
 
 #### Scripts
 
