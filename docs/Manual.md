@@ -11,11 +11,11 @@ This is the repository a user clones and runs. It contains:
 * a `bundles/` directory that serves as the bundle root; the provided `util/*` scripts manage bundles as git submodules in this directory
 * a `data/` directory used as the on-disk root for runtime data (accounts/players are configured under `data/account` and `data/player` by default)
 
-`ranviermud` depends on external packages via GitHub dependencies in `package.json`, including `ranvier`, `ranvier-datasource-file`, and `ranvier-telnet`.
+`ranviermud` depends on external repositories via GitHub dependency specs in `package.json`. For backward compatibility, dependency keys still use legacy names such as `ranvier`, `ranvier-datasource-file`, and `ranvier-telnet`.
 
 ### 2) `Rantamuta/core` — the engine library consumed by `ranviermud`
 
-This repository is the engine implementation published as the `ranvier` package. It is **not** a runnable application by itself; its exported API is built by requiring all modules under `./src/` via `require-dir`. ([GitHub][4])
+This repository is the engine implementation consumed by downstream repos, often under the legacy dependency key `ranvier` for compatibility. In this repository, package metadata is `name: "rantamuta-core"` in `package.json`. It is **not** a runnable application by itself; its exported API is built by requiring all modules under `./src/` via `require-dir`. ([GitHub][4]) ([GitHub][23])
 
 ### 3) `Rantamuta/datasource-file` — a pluggable file-backed storage backend
 
@@ -40,7 +40,7 @@ Rantamuta is a Node.js-based game server composed of:
   * attaches server events and (when not in test mode) calls `GameServer.startup(...)`
   * schedules tick loops for entities and players ([Github][2])
 
-* a **core engine library** (`core`, package `ranvier`) that provides:
+* a **core engine library** (`core`, commonly consumed as dependency key `ranvier` for compatibility) that provides:
 
   * the object model (managers/factories),
   * configuration access,
@@ -98,7 +98,7 @@ In `package.json`, `ranviermud` depends on:
 * **Minimal Config wrapper**: `Config.load(data)` stores the config object, and `Config.get(key, fallback)` reads from that cache. If `get` is called before `load`, it throws `ConfigNotLoadedError`. (No merging, validation, or deep resolution is performed by `Config` itself.) ([GitHub][10])
 * **Logging wrapper**: `Logger` wraps Winston and provides `log`, `error`, `warn`, `verbose`, plus optional file logging and pretty errors. ([GitHub][11])
 * **Entity loader abstraction**: `EntityLoader` is a thin wrapper around a datasource instance + loader config, providing `setArea`, `setBundle`, and CRUD-ish methods that delegate to the datasource if implemented. ([GitHub][7])
-* **Bundle loading convention**: `BundleManager` discovers enabled bundles and loads features from well-known paths within each bundle (commands, behaviors, server-events, etc.), then loads areas and help and “distributes” areas into the `AreaManager`. ([GitHub][8])
+* **Bundle loading convention**: `BundleManager` iterates configured enabled bundles and loads features from well-known paths within each bundle (commands, behaviors, server-events, etc.), then loads areas and help and “distributes” areas into the `AreaManager`. ([GitHub][8])
 * **Server startup surface**: `GameServer` is an `EventEmitter` that (in the core itself) only emits `startup` and `shutdown` events. This is the extension point bundles attach to (via “server events”). ([GitHub][12])
 * **Type regression checks**: `npm run typecheck` validates the published declaration surface, including a CommonJS consumer fixture. ([GitHub][23]) ([GitHub][25]) ([GitHub][26])
 
@@ -596,9 +596,30 @@ Other higher-level “entity reference” strings (e.g. `startingRoom: "limbo:wh
 `ranviermud` is the runnable wrapper and configuration repo. Engine behavior is provided by the external dependency `ranvier`.
 
 * **Game development** generally happens in `ranviermud` (config, bundles, content data).
-* **Engine development** happens in `core` (the `ranvier` package), consumed by `ranviermud` as a dependency. ([GitHub][1])
+* **Engine development** happens in `core` (repository package metadata: `rantamuta-core`), consumed by `ranviermud` as a dependency via GitHub specs. ([GitHub][1]) ([GitHub][23])
 
-### 7.2 `npm link` workflow
+### 7.2 Naming and migration steps (core maintainer policy)
+
+Rantamuta currently uses two naming layers intentionally:
+
+* **Canonical repository identity**: `Rantamuta/core`.
+* **Core package metadata**: `package.json` name is `rantamuta-core`. ([GitHub][23])
+* **Downstream compatibility dependency key**: many consumers still use `ranvier` in their own `package.json` while pointing at `github:Rantamuta/core#...`.
+* **Runtime import in legacy consumers**: `require('ranvier')`.
+
+This is intentionally conservative for compatibility and operational stability:
+
+* It avoids forced changes to existing consumer boot code and import paths.
+* It keeps migration risk low while consumers pin specific Git tags/SHAs.
+* It separates ecosystem-facing compatibility aliases from core repository ownership and maintenance policy.
+
+Migration steps for maintainers:
+
+1. **Recommended now (non-breaking)**: keep downstream dependency key `ranvier` and update only the GitHub ref (`tag`/`SHA`) to the desired `Rantamuta/core` release.
+2. **Preparation for optional rename**: remove hardcoded assumptions in downstream tooling/docs that the core dependency key must be `ranvier`; centralize that string where practical.
+3. **Breaking rename (coordinated major release only)**: switch downstream dependency key to `rantamuta-core`, update all import sites that currently use `require('ranvier')`, and release with explicit migration notes and rollback plan.
+
+### 7.3 `npm link` workflow
 
 The core repository’s README describes a `npm link` workflow:
 
@@ -607,7 +628,7 @@ The core repository’s README describes a `npm link` workflow:
 
 The `ranvier` wrapper includes  an inline comment describing essentially the same workflow to develop against a local core checkout. ([GitHub][2])
 
-### 7.3 Bundle workflows: prefer the provided submodule scripts
+### 7.4 Bundle workflows: prefer the provided submodule scripts
 
 Because bundles are treated as submodules, use the included scripts:
 
@@ -616,7 +637,7 @@ Because bundles are treated as submodules, use the included scripts:
 * update remote: `npm run update-bundle-remote <bundleName> <remote>` ([GitHub][1])
 * initialize example bundles: `npm run init` / `npm run ci:init` (writes enabled list into `ranvier.json`) ([GitHub][1])
 
-### 7.4 CI/smoke-test shape
+### 7.5 CI/smoke-test shape
 
 `ranviermud` includes a smoke-login script that:
 
@@ -651,8 +672,8 @@ This script is a consumer-level integration check that the configured bundles br
 
    * the wrapper constructs `BundleManager` with `./bundles`
    * `loadBundles()` is called
-   * scans `bundles/`
-   * loads only bundles listed in `ranvier.json.bundles`
+   * iterates configured bundle names from `ranvier.json.bundles`
+   * validates configured bundle paths and skips invalid entries
    * loads feature scripts from conventional paths (`commands/`, `server-events/`, etc.)
    * loads areas and help
    * hydrates and registers areas into the runtime managers ([GitHub][8])
