@@ -561,8 +561,217 @@ Within an enabled bundle directory, `BundleManager` conditionally loads features
 
 This list (and its order) is the authoritative “bundle API surface” for startup contributions.
 
+#### Scripts
+
+Scripts are the engine’s extension layer: small bundle-owned JS modules that plug behavior into the runtime without changing core engine code.
+
+High-level, they are intended for:
+
+* Defining gameplay behavior at content boundaries.
+* Reacting to lifecycle/game events (`spawn`, `ready`, movement, ticks, combat, save, etc.).
+* Wiring server/session entry points (`startup`/`shutdown`, input handlers).
+* Implementing player verbs (commands) and temporary mechanics (effects).
+* Attaching per-entity policy/planning hooks in content (in your bundle: `canDirect`, `canIndirect`, `planDirect`, `planIndirect`).
+
+How they fit the architecture:
+
+* Data (YAML) declares entities/areas and references script names.
+* Boot loader (`BundleManager`) loads script modules and registers listeners/hooks.
+* When entities are instantiated/hydrated, listeners are attached.
+* Runtime emits events; scripts run in response and customize behavior.
+
+In practice, scripts are meant to keep game-specific logic modular, bundle-local, and event-driven, while the core engine remains a generic host/runtime.
+
+##### 1. Event architecture and where hooks attach
+
+* All major game objects use Node `EventEmitter`.
+* Scriptable entities (`Area`, `Room`, `Item`, `Npc`) inherit `Scriptable`, which attaches behavior listeners and squelches events after prune (`__pruned`) (`Scriptable:19`).
+* Player events are attached via `PlayerManager.events` (`PlayerManager:21`, `PlayerManager:116`).
+* Server events are attached via `ServerEventManager.attach(GameServer)` during boot (`ranvier:145`).
+* `EventManager.attach` binds listeners with:
+  * `this` = emitter
+  * optional first arg = behavior config (`EventManager:40`).
+* `BehaviorManager` is just `behaviorName -> EventManager` (`BehaviorManager:9`).
+* Entity script listeners are attached per-entity-ref in `EntityFactory.scripts` and attached on instance creation (`EntityFactory:49`, `EntityFactory:70`).
+
+##### 2. Script module contracts (what each script file must export)
+
+* Entity scripts (`areas/<area>/scripts/...`):
+  * `module.exports = { listeners: { eventName: state => listenerFn } }`
+  * Loaded by `loadEntityScript` (`BundleManager:395`).
+* Behavior scripts (`behaviors/{area|room|item|npc}/...`):
+  * same `listeners` shape
+  * listener gets `(config, ...eventArgs)` because behavior config is bound in attach (`Scriptable:50`, `EventManager:44`).
+* Server events (`server-events/*.js`):
+  * `listeners` keyed by `GameServer` events (`startup`, `shutdown`) (`BundleManager:684`, `GameServer:16`).
+* Player events (`player-events.js`):
+  * `listeners` keyed by player event names (`BundleManager:240`).
+* Input events (`input-events/*.js`):
+  * export `event: state => async (session, inputData) => { ... }` (`BundleManager:549`).
+* Effect scripts (`effects/*.js`):
+  * export effect definition + optional `listeners`
+  * listeners may be object or `state => object` (`EffectFactory:22`).
+
+##### 3. Runtime event flow (important pipelines)
+
+* Boot/load:
+  * BundleManager loads features in fixed order (`quest-goals`, `quest-rewards`, `attributes`, `behaviors`, `channels`, `commands`, `effects`, `input-events`, `server-events`, `player-events.js`, `skills`) then areas/help (`BundleManager:112`).
+* Tick loop:
+  * Wrapper runs intervals:
+  * `AreaManager.tickAll(GameState)` and `ItemManager.tickAll()` (`ranvier:154`, `ranvier:155`).
+  * `PlayerManager.emit('updateTick')` (`ranvier:160`).
+  * Area `updateTick` triggers room/npc `updateTick` (`Area:37`, `Area:160`, `Area:168`).
+* Movement:
+  * Player/NPC movement emits room leave/enter and self `enterRoom` (`Player:143`, `Player:157`, `Npc:60`, `Npc:74`).
+  * Room proxies `playerEnter/playerLeave/npcEnter/npcLeave` to all room npcs/players/items (`Room:72`).
+* Combat/damage/heal:
+  * `Damage.commit` emits attacker `hit` and target `damaged` (`Damage:66`, `Damage:73`).
+  * `Heal.commit` emits attacker `heal` and target `healed` (`Heal:27`, `Heal:34`).
+* Character->Effect fanout:
+  * Every Character event is forwarded to active effects (`Character:60`, `EffectList:59`).
+* Player->Quest fanout:
+  * Every Player event forwards to active quests (`Player:62`, `QuestTracker:28`, `Quest:40`).
+* Channels:
+  * `Channel.send` emits `channelReceive(channel, sender, rawMessage)` on each target (`Channel:101`).
+
+##### 4. Built-in hook catalog (events emitted by core)
+
+**Server lifecycle**
+
+* `startup(commander)` on `GameServer` (`GameServer:16`)
+* `shutdown()` on `GameServer` (`GameServer:26`)
+
+**Area**
+
+* `roomAdded(room)` (`Area:82`)
+* `roomRemoved(room)` (`Area:96`)
+* `updateTick(state)` (`AreaManager:59`)
+
+**Room**
+
+* `spawn()` (`Room:351`)
+* `ready()` (`Area:184`)
+* `playerEnter(player, prevRoom)` (`Player:157`)
+* `playerLeave(player, nextRoom)` (`Player:143`)
+* `npcEnter(npc, prevRoom)` (`Npc:74`)
+* `npcLeave(npc, nextRoom)` (`Npc:60`)
+* `updateTick()` (`Area:160`)
+
+**Item**
+
+* `spawn()` when spawned into room (`Room:318`)
+* `updateTick()` (`ItemManager:43`)
+* `equip(equipper)` (`Character:380`)
+* `unequip(equipper)` (`Character:410`)
+* Receives proxied room move events while in room (`Room:75`)
+
+**NPC**
+
+* `spawn()` (`Room:339`)
+* `enterRoom(nextRoom)` (`Npc:79`)
+* `updateTick()` (`Area:168`)
+* Also all Character events below
+
+**Player**
+
+* `enterRoom(nextRoom)` (`Player:162`)
+* `commandQueued(index)` (`Player:54`)
+* `save(callback)` (`Player:170`)
+* `saved` (`PlayerManager:153`)
+* `updateTick` (`PlayerManager:173`)
+* Quest relay events:
+  * `questStart(instance)` (`QuestFactory:88`)
+  * `questProgress(instance, progress)` (`QuestFactory:83`)
+  * `questTurnInReady(instance)` (`QuestFactory:93`)
+  * `questComplete(instance)` (`QuestFactory:97`)
+  * `questReward(reward)` (`QuestFactory:114`)
+
+**Character base (Player + NPC)**
+
+* `attributeUpdate(attr, value)` (`Character:148`)
+* `combatStart` (`Character:244`)
+* `combatantAdded(target)` (`Character:287`)
+* `combatantRemoved(target)` (`Character:307`)
+* `combatEnd` (`Character:313`)
+* `equip(slot, item)` (`Character:386`)
+* `unequip(slot, item)` (`Character:416`)
+* `followed(target)` (`Character:499`)
+* `unfollowed(previousTarget)` (`Character:512`)
+* `gainedFollower(follower)` (`Character:527`)
+* `lostFollower(follower)` (`Character:541`)
+* `hit(damage, target, finalAmount)` (`Damage:66`)
+* `damaged(damage, finalAmount)` (`Damage:73`)
+* `heal(heal, target, finalAmount)` (`Heal:27`)
+* `healed(heal, finalAmount)` (`Heal:34`)
+* `effectAdded(effect)` (`EffectList:135`)
+* `effectRemoved()` (`EffectList:156`)
+
+**Effect**
+
+* `effectAdded` (`EffectList:131`)
+* `effectActivated` (`Effect:152`)
+* `effectStackAdded(newEffect)` (`EffectList:106`)
+* `effectRefreshed(newEffect)` (`EffectList:115`)
+* `effectDeactivated` (`Effect:168`)
+* `remove` (`Effect:180`)
+* Also receives forwarded character events (except `effectAdded/effectRemoved`) (`EffectList:61`)
+
+**Quest**
+
+* `start` (`QuestTracker:81`)
+* `progress(progress)` (`Quest:81`)
+* `turn-in-ready` (`Quest:72`)
+* `complete` (`Quest:131`)
+
+**Messaging / transport**
+
+* `channelReceive(channel, sender, rawMessage)` (`Channel:101`)
+* `close` on `TransportStream` (`TransportStream:71`)
+* `metadataUpdated(key, newValue, oldValue)` (`Metadatable:52`)
+
+##### 5. Observed hooks currently used in this workspace bundles
+
+* Server events used:
+  * `startup`, `shutdown` in `bundles/bundle-rantamuta/server-events/telnet.js:51`
+  * same in minimal bundle `bundles/bundle-minimal/server-events/telnet.js:50`
+* Input event used:
+  * `main` handler via `event: state => async (...)` in `bundles/bundle-rantamuta/input-events/main.js:10`
+* Entity script listeners used in active content:
+  * `spawn` on items and rooms (`bundles/bundle-rantamuta/areas/rantamuta/scripts/items/*.js`, `bundles/bundle-rantamuta/areas/rantamuta/scripts/rooms/bellCryptGate.js:333`)
+  * `ready` on room (`bundles/bundle-rantamuta/areas/rantamuta/scripts/rooms/bellCryptGate.js:334`)
+* No `player-events.js` currently present in bundled content (`find bundles ...` result).
+
+##### 6. Important implementation quirks / gotchas
+
+* `EventManager.detach` is broad: it calls `removeAllListeners(event)` and can remove listeners it did not create (`EventManager:73`).
+* `Scriptable.emit` suppresses all events for pruned entities and clears listeners (`Scriptable:22`).
+* Entity listeners are synchronous `EventEmitter` dispatch; async handler promises are not awaited by `emit`.
+* Area script missing-file path has a warning but still attempts load, so missing file can still throw (`BundleManager:300`, `BundleManager:307`).
+* `GameServer.shutdown()` exists but is not called by wrapper boot script by default (startup is called at `ranvier:149`).
+* Doc/event naming mismatch: JSDoc says `metadataUpdate`, emitted event is `metadataUpdated` (`Metadatable:47`, `Metadatable:52`).
+
+If you want, I can turn this into a checked-in `docs/` reference with a hook-by-hook signature matrix and a “which script type can listen to which emitter” table.
+
 #### Behaviors
 
+Behaviors are the engine’s reusable event-reaction layer for world entities.
+
+High-level:
+
+* A behavior is a named bundle module that declares listeners for entity events.
+* You attach that behavior to areas/rooms/items/NPCs via YAML (`behaviors:`).
+* At runtime, the engine binds the behavior’s listeners to each matching entity instance.
+* When that entity emits events (`spawn`, `ready`, `updateTick`, movement/combat/etc.), the behavior runs.
+
+What they are intended for:
+
+* Add dynamic game logic without changing core engine code.
+* Centralize reusable rules across multiple entities (instead of duplicating per-entity scripts).
+* Express “when X happens to this entity, do Y” patterns.
+* Power stateful world simulation and reactions over time (ticks, movement, metadata changes, channel receives).
+* Let authored content drive behavior through behavior config data in YAML.
+
+In short: behaviors are the content-side mechanism for event-driven world logic, attached declaratively and executed per entity at runtime.
 `rantamuta-core` provides **behavior framework and loader contracts**, but not built-in behavior content modules. These are provided by bundles.
 
 NB:
@@ -670,6 +879,41 @@ Constraints and sharp edges:
 * `loadBehaviors` does not currently perform the same strict export-shape validation that `loadInputEvents` does; malformed behavior modules may fail with less-specific error paths.
 * Strict mode duplicate detection (`_registerOrThrow`) covers many registries but does not register-check behavior names loaded via `loadBehaviors` (`BundleManager`).
 * In this engine revision, mutation events for `addItem/removeItem` on room/item/character are discussed in proposal docs but are not part of the currently implemented stable behavior hook surface (`node_modules/ranvier/docs/proposals/QUERY_HOOK_GUARD_AND_EVENT_DRIVEN_SCRIPTS.md`).
+
+#### Scripts versus Behaviors: Which one do I use?
+
+* `behavior` = reusable listener package by **name**, attached via an entity’s `behaviors` map.
+* `script` = listener package by **file reference** (`script:`), attached to a **specific area/entity definition**.
+
+##### **What is actually different**
+
+* Attachment key:
+  * Behaviors: keyed by behavior name (`behaviors/<type>/<name>.js`), referenced in YAML `behaviors`.
+  * Scripts: keyed by explicit script file (`areas/<area>/scripts/...`), referenced in YAML `script`.
+* Reuse model:
+  * Behaviors are meant for reuse across many entities.
+  * Scripts are usually one-off or tightly content-specific.
+* Config model:
+  * Behaviors get per-entity config automatically (`behaviorName: true|{...}`), passed as first arg via `EventManager.attach(..., config)`.
+  * Scripts don’t get that behavior-config injection; they usually read entity metadata/state directly.
+* Lifecycle wiring:
+  * Scripts are attached during factory create.
+  * Behaviors are attached during `hydrate()` via `setupBehaviors(...)`.
+* Governance:
+  * Strict duplicate checks cover many registries, but not behavior names the same way; behavior collisions are less guarded.
+
+##### **When to use which**
+
+* Use a **behavior** when:
+  * You want one mechanic pattern used by many entities.
+  * You need per-entity tuning via YAML config.
+  * You want a content-agnostic “capability” (guard, timer, AI pattern).
+* Use a **script** when:
+  * Logic is bespoke to a specific room/item/npc/area.
+  * It depends on unique puzzle/story context.
+  * Reuse/configurability is not the main goal.
+
+Practical rule: if you expect copy-paste across entities, make it a behavior; if it is unique authored content, make it a script.
 
 ### 6.4 Areas and world content layout (as configured by `ranvier.json`)
 
