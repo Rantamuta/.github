@@ -786,6 +786,335 @@ Therefore:
 11. Missing `quest-rewards/` directory is not itself an error and can hide authoring omissions until quest completion path is hit.
 12. Since reward behavior is code-driven, behavior changes are compatibility-relevant even when quest YAML is unchanged.
 
+#### Attributes
+
+Attributes are one of the core gameplay state primitives in Ranvier/Rantamuta. They represent mutable character stats/resources (health, mana, stamina, favor, armor, etc.) with explicit rules for:
+
+* baseline value
+* depletion/recovery
+* derived/computed max values
+* temporary runtime modification via effects
+* persistence and hydration across saves
+
+At runtime, attributes are not just arbitrary numeric fields on a player/NPC object. They are typed `Attribute` instances living inside an `Attributes` map on `Character`, produced from definitions registered in `AttributeFactory`.
+
+##### 1. What an Attribute is (runtime data model)
+
+Core `Attribute` shape (`src/Attribute.js`):
+
+* `name: string`
+* `base: number` (nominal max before depletion)
+* `delta: number` (difference from max/base, typically <= 0)
+* `formula: AttributeFormula | null`
+* `metadata: object`
+
+Mutation API:
+
+* `lower(amount)` -> delegates to `raise(-amount)`
+* `raise(amount)` -> clamps delta with `Math.min(this.delta + amount, 0)` (cannot raise delta above 0 through this path)
+* `setBase(amount)` -> clamps base to non-negative
+* `setDelta(amount)` -> clamps delta to <= 0
+
+Persistence API:
+
+* `serialize()` returns `{ base, delta }`
+
+Important behavioral detail:
+
+* “Current” value is not stored directly.
+* Current value is computed from max + delta in `Character.getAttribute`.
+
+##### 2. Container and factory responsibilities
+
+`Attributes` (`src/Attributes.js`) is a `Map<string, Attribute>` with helper methods:
+
+* `add(attribute)` type-checks `Attribute` instance
+* `clearDeltas()` resets every attribute to max (`delta = 0`)
+* `serialize()` returns object map `{ [attrName]: { base, delta } }`
+
+`AttributeFactory` (`src/AttributeFactory.js`) is the global registry of attribute definitions:
+
+* `add(name, base, formula?, metadata?)` stores canonical definition
+* `has(name)` and `get(name)` expose registry lookup
+* `create(name, base?, delta?)` produces `Attribute` instance from definition
+* `validateAttributes()` checks circular formula dependencies
+
+Factory lifecycle role:
+
+* Bundle loading populates factory once at boot.
+* Character hydration uses this registry as compatibility gate and constructor source.
+
+##### 3. Authoring contract in bundles (`attributes.js`)
+
+Bundle contract (`BundleManager.loadAttributes`):
+
+* loader looks for `<bundle>/attributes.js`
+* file must export an **array**
+* each entry must be an object containing at least:
+  * `name`
+  * `base`
+* optional fields:
+  * `metadata`
+  * `formula: { requires: string[], fn: function }`
+
+Example shape:
+
+```js
+module.exports = [
+  { name: 'health', base: 100 },
+  {
+    name: 'maxHealth',
+    base: 100,
+    formula: {
+      requires: ['stamina'],
+      fn: function (character, current, stamina) {
+        return current + stamina * 5;
+      }
+    },
+    metadata: { ui: 'derived' }
+  }
+];
+```
+
+Compatibility note:
+
+* Attribute keys are global by name across enabled bundles.
+* Renaming/removing an attribute key is a persistence compatibility change for saved players/NPCs.
+
+##### 4. Boot/load pipeline and validation timing
+
+High-level boot path:
+
+1. Wrapper constructs `GameState.AttributeFactory`.
+2. `BundleManager.loadBundles()` iterates enabled bundles in config order.
+3. Per bundle, features are loaded in fixed order; `attributes.js` is loaded early.
+4. After all bundles load, `AttributeFactory.validateAttributes()` runs once.
+5. Area/entity distribution/hydration follows.
+
+What this means operationally:
+
+* All attribute definitions must exist before entity hydration consumes them.
+* Formula cycle issues fail startup after bundle load phase.
+* Attribute loading errors inside a file are partly best-effort:
+  * invalid entries are logged and skipped
+  * valid entries in same file may still register
+
+##### 5. Hydration and persistence behavior
+
+Character hydration (`Character.hydrate`) attribute path:
+
+* if `this.attributes` is not already an `Attributes` instance, engine treats it as persisted/object config
+* each key/value is normalized:
+  * `attr: number` -> `{ base: number }`
+  * `attr: { base, delta? }` accepted
+* for each key:
+  * must exist in `state.AttributeFactory` or hydration throws
+  * instance created with `AttributeFactory.create(attr, base, delta || 0)`
+
+Serialization path:
+
+* `Character.serialize()` includes `attributes: this.attributes.serialize()`
+* persisted format is object map keyed by attribute name with `{ base, delta }`
+
+Practical persistence consequence:
+
+* Saved player attributes must remain compatible with currently loaded attribute definitions.
+* Unknown persisted attribute keys are hard failures during hydration.
+
+##### 6. Runtime value model (max vs current vs base)
+
+`Character` provides three value concepts:
+
+* `getBaseAttribute(attr)` -> raw `Attribute.base`
+* `getMaxAttribute(attr)` -> base after effect modifiers and optional formula evaluation
+* `getAttribute(attr)` -> current value = `getMaxAttribute(attr) + delta`
+
+Mutation methods:
+
+* `setAttributeToMax(attr)` -> `delta = 0`
+* `raiseAttribute(attr, amount)` -> increase toward max, clamped at max
+* `lowerAttribute(attr, amount)` -> decrease current by making delta more negative
+* `setAttributeBase(attr, newBase)` -> permanent base change
+
+Event emission:
+
+* these mutators emit `attributeUpdate(attrName, value)`
+
+Design intent from core docs/comments:
+
+* permanent progression should use `setAttributeBase`
+* temporary/stat-mod effects should use effect modifiers, not base mutation
+
+##### 7. Formula semantics in detail
+
+`AttributeFormula` contract:
+
+* constructor requires:
+  * `requires` array
+  * callable function `fn`
+
+Execution flow inside `Character.getMaxAttribute`:
+
+1. compute effect-adjusted current candidate for this attribute (`currentVal`)
+2. recursively resolve each required attr via `getMaxAttribute(reqAttr)`
+3. call formula evaluate path
+
+Call semantics:
+
+* formula function is bound with `this = Attribute instance` for the attribute being computed
+* runtime arguments are:
+  * `character`
+  * `current` (effect-adjusted pre-formula value)
+  * required values in `requires` order
+
+Validation behavior and limits:
+
+* `AttributeFactory.validateAttributes()` detects circular dependencies among formula-declared references.
+* It does **not** verify that every required attribute exists in registry or on every character.
+* Missing dependencies can pass boot validation and fail later at runtime when accessed.
+
+##### 8. Effects interaction with attributes
+
+Effects participate in max computation through `EffectList.evaluateAttribute`:
+
+* start from attribute `base` (`attr.base || 0`)
+* apply each active, unpaused effect in order
+* each effect may modify value via `Effect.modifyAttribute`
+
+Modifier forms (`Effect.modifiers.attributes`):
+
+* map form: `{ health: fn, mana: fn }`
+* function form: `(attrName, current) => newValue`
+
+Pause/deactivation semantics:
+
+* deactivated effects do not modify attributes
+* paused effects do not modify attributes
+
+Order semantics:
+
+* modifier application is sequential in effect list iteration order
+* commutativity is not guaranteed
+* stacking multiple modifiers on same attribute is order-sensitive
+
+##### 9. Damage, healing, and skill resources
+
+Damage/Heal are attribute-targeted by name:
+
+* `Damage.commit(target)` -> `target.lowerAttribute(attribute, finalAmount)`
+* `Heal.commit(target)` -> `target.raiseAttribute(attribute, finalAmount)`
+
+Final amount path:
+
+* attacker outgoing damage modifiers apply first
+* target incoming damage modifiers apply second
+* damage floors at 0 after modifier pipeline
+
+Skill resources use attributes:
+
+* resource config shape: `{ attribute, cost }` (or array)
+* sufficiency check uses `character.hasAttribute` and `character.getAttribute`
+* payment path uses self-inflicted `Damage` on resource attribute
+
+Resulting gameplay implication:
+
+* resource costs can be reduced or transformed by damage/effect modifier systems because resource payment is routed through damage pipeline.
+
+##### 10. Prompt interpolation and player-facing attribute rendering
+
+Player prompt interpolation exposes each attribute as:
+
+* `%<attr>.current%`
+* `%<attr>.max%`
+* `%<attr>.base%`
+
+Interpolation behavior:
+
+* token regex only supports lowercase letters and dots (`%([a-z\\.]+)%`)
+* missing token path renders as `invalid-token`
+
+This means:
+
+* prompt keys are case-sensitive and constrained by regex
+* custom prompt token data can be merged through `extraData`
+
+##### 11. Strict mode, duplicates, and registry collision semantics
+
+Attribute registration is guarded by BundleManager duplicate tracking:
+
+* non-strict mode (`strictMode=false`):
+  * normal `Map.set` overwrite behavior (later registration wins)
+* strict mode (`strictMode=true`):
+  * cross-bundle duplicate attribute names throw startup error
+
+Edge behavior:
+
+* duplicate registration from the **same** bundle key is not rejected by guard; last write remains in map.
+
+##### 12. Wrapper/project integration findings (this workspace)
+
+Current repo reality:
+
+* `ranvier.json` enables `bundle-rantamuta`
+* new players are initialized with `attributes: {}`
+* persisted players under `data/player/*.json` include concrete attribute maps in some records
+
+Compatibility implication:
+
+* if enabled bundles do not load matching attribute definitions for persisted keys, hydration fails with invalid attribute errors.
+
+Validation support:
+
+* `util/validate-bundles.js --engine --players` checks persisted player attribute keys against `AttributeFactory` and reports unknowns (`UNKNOWN_PLAYER_ATTRIBUTE`).
+
+##### 13. Gotchas and hard edges (high priority)
+
+1. `AttributeFactory.create(name, base)` uses `base || def.base`.
+   Passing `0` as override falls back to default base instead of using 0.
+
+2. Constructor validation uses `isNaN`, not strict numeric typing.
+   Numeric strings can pass constructor checks and remain strings at runtime.
+
+3. `Attribute` constructor does not clamp positive `delta`.
+   Clamping to `<= 0` only happens in `raise`/`setDelta`; direct construction/hydration can hold positive deltas.
+
+4. Formula validation only catches cycles.
+   Missing required keys can pass boot and fail later in `getMaxAttribute`.
+
+5. Formula evaluation is recursive across dependencies.
+   Deep dependency chains can be expensive and are evaluated on each read call path.
+
+6. Effect ordering matters for attribute max calculation.
+   Multiple effects that alter same stat can produce different outcomes if order changes.
+
+7. Non-strict mode allows silent overrides of attribute definitions across bundles.
+   This can silently change gameplay and persistence expectations.
+
+8. Renaming/removing an attribute key is a storage compatibility break.
+   Existing saved players may fail hydration unless migrated.
+
+9. Attribute `metadata` in factory definitions is passed by reference to created instances.
+   Mutating metadata from one instance can leak across instances/definition if code mutates shared object.
+
+10. Token interpolation regex for prompts is restrictive.
+    Uppercase or unsupported token formats will not resolve.
+
+11. `attributeUpdate` event payload is current numeric value, not full attribute object snapshot.
+    Listeners needing base/max/delta details must re-query character state.
+
+12. Startup can succeed with partial attribute loading if some entries in `attributes.js` are malformed and skipped.
+    This can defer failures until hydration or runtime access.
+
+##### 14. Recommended maintenance guardrails
+
+1. Treat attribute key names as versioned compatibility surface.
+2. Add/migrate player data before removing or renaming keys.
+3. Prefer explicit number coercion/validation in bundle-authored formulas and scripts.
+4. Keep formulas pure and side-effect free.
+5. Avoid mutating attribute metadata objects after registration.
+6. Run `util/validate-bundles.js --engine --players` in CI/local gates after attribute changes.
+7. Use strict mode in compatibility-sensitive environments to surface cross-bundle collisions early.
+
 #### Scripts
 
 Scripts are the engine’s extension layer: small bundle-owned JS modules that plug behavior into the runtime without changing core engine code.
@@ -954,7 +1283,184 @@ In practice, scripts are meant to keep game-specific logic modular, bundle-local
 * `close` on `TransportStream` (`TransportStream:71`)
 * `metadataUpdated(key, newValue, oldValue)` (`Metadatable:52`)
 
-##### 5. Observed hooks currently used in this workspace bundles
+##### 5. Player events (`player-events.js`) deep dive
+
+`player-events.js` is a bundle-level listener surface for `Player` instances.
+It is the player-specific equivalent of entity/behavior listener modules, but it uses a distinct attach path.
+
+What it is:
+
+* A single optional bundle root module: `bundles/<bundle>/player-events.js`.
+* A listener registration map keyed by player event names.
+* A runtime-wide player hook registry for that bundle (`PlayerManager.events`).
+
+What it is not:
+
+* Not an area/entity `script:` module (`areas/<area>/scripts/...`).
+* Not a behavior module (`behaviors/{area|room|item|npc}/...`).
+* Not an effect definition (`effects/*.js`).
+* Not an input/session handler (`input-events/*.js`) or server lifecycle handler (`server-events/*.js`).
+
+The loader checks exactly `player-events.js` in the bundle root as part of fixed feature loading (`BundleManager:127`).
+
+Why this matters architecturally:
+
+* `Player` does not inherit `Scriptable`, unlike world entities (`Npc` uses `Scriptable(Character)`, while `Player` extends `Character` directly) (`Npc:18`, `Player:24`).
+* Therefore player hooks are centralized through `PlayerManager.events` rather than attached through behavior maps (`PlayerManager:21`).
+* This creates a clean separation:
+  * world/content behavior: scripts + behaviors + effects
+  * player-global behavior: `player-events.js`
+
+Module contract and loader semantics:
+
+* Expected shape:
+  * `module.exports = { listeners: { [eventName]: state => listenerFn } }`
+* Backward-compatible loader function form is also accepted because `_getLoader` executes function exports (`BundleManager:714`).
+* Load path:
+  * require module (`BundleManager:243`)
+  * normalize via `_getLoader(...)`
+  * read `.listeners`
+  * for each listener factory: invoke with `state`
+  * register resulting function via `PlayerManager.addListener(eventName, fn)` (`BundleManager:244`, `BundleManager:248`, `PlayerManager:81`).
+
+Important contract caveats:
+
+* There is no structural validation in `loadPlayerEvents`:
+  * invalid/missing `.listeners` or non-function listener factories will fail at runtime in generic ways.
+* Strict mode duplicate checks are implemented for many registries, but not for `player-events` registrations (`BundleManager:_registerOrThrow` use sites do not include `loadPlayerEvents`).
+* Multiple bundles can attach listeners to the same event; all are retained and invoked.
+
+How registration and attachment actually work:
+
+* `PlayerManager.events` is an `EventManager` (`PlayerManager:21`).
+* `EventManager` stores `Map<eventName, Set<listener>>` (`EventManager:10`).
+* `Set` dedupes by function identity only.
+* Attach-time behavior:
+  * `PlayerManager.loadPlayer(...)` attaches all currently-registered player event listeners to each loaded player (`PlayerManager:116`).
+  * New-player creation code in this repo manually does `state.PlayerManager.events.attach(player)` before add/hydrate (`bundles/bundle-rantamuta/lib/session/player-lifecycle.js:52`, `bundles/bundle-minimal/input-events/main.js:84`).
+
+Operational implication:
+
+* Player-event listeners are attached when a player object is created/loaded.
+* Adding new listeners later does not retroactively attach them to already-attached players unless you explicitly re-attach.
+
+Listener binding semantics:
+
+* `EventManager.attach` binds each listener with `this = emitter` (`EventManager:46`).
+* For player-events, emitter is the `Player` instance.
+* No behavior config argument is passed for player-events (unlike behavior listeners attached with config binding).
+
+Dispatch semantics and ordering on player emit:
+
+`Player.emit(event, ...args)` path (`Player:62`):
+
+1. If player is pruned or not hydrated, event is ignored (`Player:63`).
+2. `super.emit` runs, which is `Character.emit` (`Player:67`, `Character:60`).
+3. `Character.emit` does:
+   * `EventEmitter` dispatch to player listeners
+   * then forwards event to active effects (`Character:63`, `EffectList:59`).
+4. After `super.emit`, `Player.emit` forwards the same event to active quests via `questTracker.emit` (`Player:69`, `QuestTracker:28`).
+
+Practical consequence:
+
+* Player event listeners run before effect listeners and before quest-goal listeners for the same event.
+* Event dispatch is synchronous `EventEmitter` dispatch; promises returned by async listeners are not awaited.
+
+Player event sources you can rely on:
+
+Direct player lifecycle/events:
+
+* `enterRoom(nextRoom)` (`Player:162`)
+* `commandQueued(index)` (`Player:54`)
+* `save(callback)` (`Player:170`)
+* `saved` (`PlayerManager:153`)
+* `updateTick` (`PlayerManager:173`)
+
+Quest relay events emitted on player:
+
+* `questStart(instance)` (`QuestFactory:88`)
+* `questProgress(instance, progress)` (`QuestFactory:83`)
+* `questTurnInReady(instance)` (`QuestFactory:93`)
+* `questComplete(instance)` (`QuestFactory:97`)
+* `questReward(reward)` (`QuestFactory:114`)
+
+Inherited `Character` events (players receive all of these):
+
+* `attributeUpdate`, combat events, equipment events, follow events (`Character` emit sites).
+* Damage/heal events emitted onto attacker/target: `hit`, `damaged`, `heal`, `healed` (`Damage:66`, `Damage:73`, `Heal:27`, `Heal:34`).
+* Effect lifecycle signals on character: `effectAdded(effect)`, `effectRemoved(effect)` (`EffectList:135`, `EffectList:156`).
+* Metadata updates: `metadataUpdated(key, value, oldValue)` (`Metadatable:52`).
+
+Room-proxied events players can observe while present in a room:
+
+* `playerEnter`, `playerLeave`, `npcEnter`, `npcLeave` are proxied by `Room.emit` to room occupants (`Room:87`, `Room:97`).
+* Core movement emits these room events from player/NPC move flows (`Player:143`, `Player:157`, `Npc:60`, `Npc:74`).
+
+Channel system events:
+
+* Channel send emits `channelReceive(channel, sender, rawMessage)` on each target (including players) (`Channel:101`).
+
+Tick and scheduling integration:
+
+* Wrapper drives player ticks by interval:
+  * `setInterval(() => GameState.PlayerManager.emit('updateTick'), Config.get('playerTickFrequency', 100))` (`ranvier:159`, `ranvier:160`).
+* `PlayerManager` listens to its own `updateTick` and fans out to each active player (`PlayerManager:23`, `PlayerManager:173`).
+* Any `updateTick` player-event listener therefore runs at configured player tick frequency.
+
+Persistence integration (easy to misunderstand):
+
+* `Player.save()` only emits `save` and does not itself write persistence (`Player:170`).
+* Persistence writes happen in `PlayerManager.save(player)` (`PlayerManager:148`), which then emits `saved` (`PlayerManager:153`).
+* Quest progression uses `player.save()` in quest internals (`QuestFactory:84`, `QuestFactory:101`, `QuestFactory:120`), so downstream systems that expect autosave semantics often rely on `save` listeners to call manager persistence.
+
+Engineering caution:
+
+* If no `save` listener path performs persistence, calling `player.save()` alone does not guarantee disk write.
+* In this wrapper, explicit code paths call `PlayerManager.save(player)` on quit/socket close (`bundles/bundle-rantamuta/lib/session/player-lifecycle.js:108`, `bundles/bundle-rantamuta/server-events/telnet.js:96`), but that is not the same as global `save` event policy.
+
+Command queue coupling note:
+
+* `Player.queueCommand(...)` emits `commandQueued(index)` (`Player:52`, `Player:54`).
+* `CommandQueue` execution loop is not driven by core/player tick automatically in this workspace’s current runtime wiring.
+* Historically, downstreams commonly drive queued command execution from player `updateTick` handlers, making `player-events` a natural place for command queue policy.
+
+Inter-bundle composition and conflict behavior:
+
+* `player-events` listeners from all loaded bundles are additive.
+* Same event name across bundles means multiple listeners are attached.
+* Listener order follows:
+  * bundle load order from config (`BundleManager.loadBundles` iterates configured bundles in order)
+  * then insertion order in `EventManager` map/set.
+* There is no strict-mode duplicate-fail path for player event keys.
+
+Failure model and fault containment:
+
+* Listener exceptions propagate on `emit` unless caller catches them.
+* Many emit sites do not wrap with try/catch; thrown listener errors can interrupt surrounding gameplay flow.
+* For hot paths (`updateTick`), uncaught exceptions can become high-frequency failure loops.
+
+Recommended maintainer guardrails for `player-events`:
+
+1. Keep `updateTick` listeners O(1) or bounded by local player state; never scan world state blindly each tick.
+2. Prefer explicit throttling (`metadata.lastXAt`, monotonic checks) for expensive behavior.
+3. Make listeners idempotent where possible (especially on reconnect/hydration boundaries).
+4. Keep persistence explicit: choose and document whether `save` listeners call `PlayerManager.save` or merely mutate state.
+5. Do not assume async listener completion order; `emit` is synchronous and non-awaiting.
+6. Add logging context (`player`, event name) around risky listener logic.
+7. Treat event names as compatibility surface for bundles and tests.
+
+Current workspace state (important):
+
+* `ranvier.json` currently loads only `bundle-rantamuta` (`ranvier.json:3`).
+* No `player-events.js` is currently present in active bundles in this workspace.
+* Therefore the player-events mechanism exists and is wired, but no bundle-level player listeners are currently registered by default.
+
+Forward-looking note:
+
+* `core` contains a proposal for first-class root script exports (`docs/proposals/FIRST_CLASS_SCRIPT_EXPORTS.md`), including player-event root handlers.
+* Current shipped loader behavior still expects `.listeners` for `player-events.js`.
+
+##### 6. Observed hooks currently used in this workspace bundles
 
 * Server events used:
   * `startup`, `shutdown` in `bundles/bundle-rantamuta/server-events/telnet.js:51`
@@ -966,7 +1472,7 @@ In practice, scripts are meant to keep game-specific logic modular, bundle-local
   * `ready` on room (`bundles/bundle-rantamuta/areas/rantamuta/scripts/rooms/bellCryptGate.js:334`)
 * No `player-events.js` currently present in bundled content (`find bundles ...` result).
 
-##### 6. Important implementation quirks / gotchas
+##### 7. Important implementation quirks / gotchas
 
 * `EventManager.detach` is broad: it calls `removeAllListeners(event)` and can remove listeners it did not create (`EventManager:73`).
 * `Scriptable.emit` suppresses all events for pruned entities and clears listeners (`Scriptable:22`).
