@@ -561,6 +561,116 @@ Within an enabled bundle directory, `BundleManager` conditionally loads features
 
 This list (and its order) is the authoritative “bundle API surface” for startup contributions.
 
+#### Behaviors
+
+`rantamuta-core` provides **behavior framework and loader contracts**, but not built-in behavior content modules. These are provided by bundles.
+
+NB:
+
+* A `behavior` is an instantiation of an `EventManager`.
+* There are no built-in `behaviors/` script files shipped inside `rantamuta-core`.
+* `BundleManager` still defines a first-class `behaviors/` feature path and loads `area`, `npc`, `item`, and `room` behavior registries from bundle directories.
+* This engine also supports entity-specific `script:` listeners (loaded from area-local `scripts/` paths) alongside behavior registries.
+* Player hooks are separate: they are not loaded through `behaviors/`, but through `player-events.js`.
+
+Core behavior architecture:
+
+* `BehaviorManager` stores `Map<behaviorName, EventManager>` and is the central behavior registry (`BehaviorManager`).
+* `EventManager` stores `Map<eventName, Set<listener>>`, supports `add`, `attach`, and `detach` (`EventManager`).
+* `Scriptable` mixin provides:
+  * `hasBehavior(name)`
+  * `getBehavior(name)`
+  * `setupBehaviors(manager)`
+  (`Scriptable`)
+* `GameEntity` extends `EventEmitter` through `Scriptable(Metadatable(EventEmitter))`, so area/room/item and other entity classes share the same attach model (`GameEntity`).
+* `Npc` is scriptable via `Scriptable(Character)` and therefore receives both scriptable behavior listeners and character/combat events (`Npc`).
+
+Load and bind lifecycle:
+
+* Bundle feature load order is hardcoded. `behaviors/` is loaded early, before channels/commands/effects/input events/skills (`BundleManager`).
+* `loadBehaviors` scans:
+  * `behaviors/area/`
+  * `behaviors/npc/`
+  * `behaviors/item/`
+  * `behaviors/room/`
+  (`BundleManager`)
+* For each behavior module:
+  * loader is required
+  * `.listeners` map is read
+  * each listener factory is invoked as `listener(state)`
+  * resulting handler is registered under behavior name + event name in the corresponding behavior manager
+  (`BundleManager`)
+* During entity hydration:
+  * area: `this.setupBehaviors(state.AreaBehaviorManager)`
+  * room: `this.setupBehaviors(state.RoomBehaviorManager)`
+  * npc: `this.setupBehaviors(state.MobBehaviorManager)`
+  * item: `this.setupBehaviors(state.ItemBehaviorManager)`
+  (`Area`, `Room`, `Npc`, `Item`)
+
+Listener contract and invocation semantics:
+
+* Expected behavior module shape:
+  * `module.exports = { listeners: { [eventName]: (state) => handlerFn } }`
+* On `attach`, listeners are bound to the emitter as `this`:
+  * with config: `listener.bind(emitter, config)`
+  * without config: `listener.bind(emitter)`
+  (`EventManager`)
+* Behavior config rules:
+  * behavior map values come from entity definition (`behaviors` map)
+  * `behaviorName: true` normalizes to `{}` before attach
+  (`Scriptable`)
+* Entity-specific scripts (`script:` in area/entity definitions) use a similar `listeners` map but attach through factory script registries (`BundleManager`, `EntityFactory`).
+* Back-compat loader behavior:
+  * if a module export is a function, `_getLoader` calls it with legacy args and uses the returned object.
+  (`BundleManager`)
+
+Behavior hook catalog (engine-emitted events commonly used by scriptable entities):
+
+* Area-oriented hooks:
+  * `updateTick(state)`
+  * `roomAdded(room)`
+  * `roomRemoved(room)`
+  * `metadataUpdated(key, value, oldValue)`
+  * `channelReceive(channel, sender, rawMessage)` (if area is a channel target)
+* Room-oriented hooks:
+  * `spawn()`
+  * `ready()`
+  * `updateTick()`
+  * `playerEnter(player, prevRoom)`
+  * `playerLeave(player, nextRoom)`
+  * `npcEnter(npc, prevRoom)`
+  * `npcLeave(npc, nextRoom)`
+  * `metadataUpdated(...)`
+  * `channelReceive(...)`
+* Item-oriented hooks:
+  * `spawn()`
+  * `updateTick()`
+  * `equip(character)`
+  * `unequip(character)`
+  * proxied room movement hooks: `playerEnter`, `playerLeave`, `npcEnter`, `npcLeave`
+  * `metadataUpdated(...)`
+* NPC-oriented hooks (via scriptable + character event surface):
+  * lifecycle: `spawn`, `updateTick`, `enterRoom`
+  * combat/attribute: `attributeUpdate`, `combatStart`, `combatantAdded`, `combatantRemoved`, `combatEnd`, `hit`, `damaged`, `heal`, `healed`
+  * equipment/following: `equip`, `unequip`, `followed`, `unfollowed`, `gainedFollower`, `lostFollower`
+  * effects on character: `effectAdded(effect)`, `effectRemoved()`
+  * proxied room movement hooks and channel hooks as above
+
+Propagation and ordering behavior:
+
+* `Room.emit` emits on room first, then proxies selected movement events to entities in the room (`Room`).
+* `Character.emit` emits on character first, then proxies same event to active effects (`Character`).
+* Area constructor registers its own internal `updateTick` handler early, so area update logic runs as part of the same event channel used by behavior listeners (`Area`).
+* Entity script listeners often attach during factory create paths; behavior listeners attach during hydrate via `setupBehaviors`. This ordering matters if multiple listeners rely on side effects at spawn/hydrate time.
+
+Constraints and sharp edges:
+
+* Player behavior is intentionally separate from `behaviors/`; player listeners are loaded from `player-events.js` into `PlayerManager.events` (`BundleManager`, `PlayerManager`).
+* `EventManager.detach` is broad and calls `removeAllListeners(event)` for selected events; this removes listeners beyond those owned by that manager (`EventManager`, `node_modules/ranvier/docs/NOTES.md`).
+* `loadBehaviors` does not currently perform the same strict export-shape validation that `loadInputEvents` does; malformed behavior modules may fail with less-specific error paths.
+* Strict mode duplicate detection (`_registerOrThrow`) covers many registries but does not register-check behavior names loaded via `loadBehaviors` (`BundleManager`).
+* In this engine revision, mutation events for `addItem/removeItem` on room/item/character are discussed in proposal docs but are not part of the currently implemented stable behavior hook surface (`node_modules/ranvier/docs/proposals/QUERY_HOOK_GUARD_AND_EVENT_DRIVEN_SCRIPTS.md`).
+
 ### 6.4 Areas and world content layout (as configured by `ranvier.json`)
 
 The default `entityLoaders` define concrete paths for world content:
