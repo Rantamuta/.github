@@ -875,10 +875,10 @@ Propagation and ordering behavior:
 Constraints and sharp edges:
 
 * Player behavior is intentionally separate from `behaviors/`; player listeners are loaded from `player-events.js` into `PlayerManager.events` (`BundleManager`, `PlayerManager`).
-* `EventManager.detach` is broad and calls `removeAllListeners(event)` for selected events; this removes listeners beyond those owned by that manager (`EventManager`, `node_modules/ranvier/docs/NOTES.md`).
+* `EventManager.detach` is broad and calls `removeAllListeners(event)` for selected events; this removes listeners beyond those owned by that manager (`EventManager`, `docs/NOTES.md`).
 * `loadBehaviors` does not currently perform the same strict export-shape validation that `loadInputEvents` does; malformed behavior modules may fail with less-specific error paths.
 * Strict mode duplicate detection (`_registerOrThrow`) covers many registries but does not register-check behavior names loaded via `loadBehaviors` (`BundleManager`).
-* In this engine revision, mutation events for `addItem/removeItem` on room/item/character are discussed in proposal docs but are not part of the currently implemented stable behavior hook surface (`node_modules/ranvier/docs/proposals/QUERY_HOOK_GUARD_AND_EVENT_DRIVEN_SCRIPTS.md`).
+* In this engine revision, mutation events for `addItem/removeItem` on room/item/character are discussed in proposal docs but are not part of the currently implemented stable behavior hook surface (`docs/proposals/QUERY_HOOK_GUARD_AND_EVENT_DRIVEN_SCRIPTS.md`).
 
 #### Scripts versus Behaviors: Which one do I use?
 
@@ -914,6 +914,200 @@ Constraints and sharp edges:
   * Reuse/configurability is not the main goal.
 
 Practical rule: if you expect copy-paste across entities, make it a behavior; if it is unique authored content, make it a script.
+
+#### Effects
+
+##### 1. What Effects Are
+
+Effects are per-`Character` runtime state objects used for temporary or persistent gameplay modifiers:
+
+* Attribute max modification (`health`, `armor`, etc.) via modifier functions in `src/Effect.js:203`.
+* Incoming/outgoing damage modification in `src/Effect.js:220` and `src/Effect.js:230`.
+* Time/event-driven behavior via listeners attached to each effect instance in `src/EffectFactory.js:34`.
+* Cooldowns and passive skill mechanics via `Skill` integration in `src/Skill.js:143` and `src/Skill.js:174`.
+
+Effects live in `Character.effects` (`EffectList`) in `src/Character.js:44`.
+
+##### 2. Effect Definition Contract
+
+Effect files are loaded from bundle `effects/` directories (if present), keyed by filename:
+
+* Loader path and registration: `src/BundleManager.js:623`.
+* Effect id from filename stem: `src/BundleManager.js:633`.
+* Script-file detection: `src/Data.js:132`.
+
+Definition shape consumed by `EffectFactory.add`:
+
+* `config`
+* `state`
+* `modifiers`
+* `flags`
+* `listeners`
+From `types/EffectFactory.d.ts:28`.
+
+`config` defaults (applied by constructor):
+
+* `autoActivate: true`
+* `description: ''`
+* `duration: Infinity`
+* `hidden: false`
+* `maxStacks: 0`
+* `name: 'Unnamed Effect'`
+* `persists: true`
+* `refreshes: false`
+* `tickInterval: false`
+* `type: 'undef'`
+* `unique: true`
+At `src/Effect.js:41`.
+
+Important units:
+
+* `duration` is milliseconds (`src/Effect.js:22`).
+* `tickInterval` is seconds (`src/Effect.js:20` + `EffectList` check in `src/EffectList.js:75`).
+
+##### 3. How Effects Are Loaded
+
+Boot sequence:
+
+* Wrapper creates `GameState.EffectFactory` in `ranvier:107`.
+* Bundle load order includes `effects/` before `skills/` in `src/BundleManager.js:124`.
+* `loadEffects` requires each effect file and calls `EffectFactory.add` in `src/BundleManager.js:638`.
+
+Compatibility loader behavior:
+
+* If module export is a function, `_getLoader` calls it (legacy pattern) in `src/BundleManager.js:714`.
+
+Duplicate behavior:
+
+* `EffectFactory.add` silently ignores duplicate ids (`if has(id) return`) in `src/EffectFactory.js:23`.
+* Strict mode adds cross-bundle duplicate rejection before add (`_registerOrThrow`) in `src/BundleManager.js:637` and `src/BundleManager.js:733`.
+* Non-strict mode preserves first-write-wins for effects due duplicate-ignore in factory (validated in test) at `test/unit/BundleManagerStrictMode.js:229`.
+
+##### 4. Runtime Lifecycle
+
+Apply effect:
+
+1. Create instance with `EffectFactory.create(id, configOverride, stateOverride)` at `src/EffectFactory.js:61`.
+2. Add to character with `character.addEffect(effect)` at `src/Character.js:218`.
+3. `EffectList.add` sets target and emits `effectAdded` in `src/EffectList.js:126`.
+
+Auto-activation:
+
+* If `config.autoActivate`, constructor binds `effectAdded -> activate` in `src/Effect.js:77`.
+
+Expiry:
+
+* No timer object exists per effect.
+* Expiry is checked lazily by `validateEffects()` calls in `src/EffectList.js:169`.
+* Expired effects are removed when effect list is touched (`entries`, `emit`, `evaluate*`, `serialize`, etc.).
+
+Removal:
+
+* Manual: call `effect.remove()` to emit `remove` in `src/Effect.js:176`.
+* `EffectList.add` installs `remove` listener to actually detach in `src/EffectList.js:136`.
+* `EffectList.remove` deactivates then emits `Character#effectRemoved` in `src/EffectList.js:151`.
+
+##### 5. Event Model and What Effects Can Listen To
+
+Each effect is an `EventEmitter` instance (`src/Effect.js:35`).
+
+Listeners are attached via `EventManager.attach(effect)` in `src/EffectFactory.js:70`.
+
+Character events are proxied to effects:
+
+* `Character.emit` always forwards to `effects.emit` in `src/Character.js:60`.
+* `EffectList.emit` forwards all events except `effectAdded`/`effectRemoved` to avoid ambiguity in `src/EffectList.js:61`.
+
+Effect lifecycle events available:
+
+* `effectAdded`
+* `effectActivated`
+* `effectStackAdded`
+* `effectRefreshed`
+* `effectDeactivated`
+* `remove`
+Emissions are in `src/EffectList.js:106`, `src/EffectList.js:115`, `src/EffectList.js:131`, `src/Effect.js:152`, `src/Effect.js:168`, `src/Effect.js:180`.
+
+Tick delivery:
+
+* Wrapper tick intervals in `ranvier:153` and `ranvier:159`.
+* Players get `updateTick` via `PlayerManager` in `src/PlayerManager.js:173`.
+* NPCs get `updateTick` via area tick fanout in `src/Area.js:168`.
+* `tickInterval` gating is applied only inside `EffectList.emit` for `updateTick` at `src/EffectList.js:73`.
+
+##### 6. Modifier Features
+
+Attribute modifiers:
+
+* Per-attribute map or single function strategy in `src/Effect.js:205`.
+
+Damage modifiers:
+
+* Outgoing modifiers run on attacker first (`Damage.evaluate`) at `src/Damage.js:43`.
+* Incoming modifiers run on target next at `src/Damage.js:46`.
+* Negative totals are clamped to `0` in `src/EffectList.js:213` and `src/EffectList.js:229`.
+
+Skills integration:
+
+* Passive skills instantiate configured effect id at `src/Skill.js:143`.
+* Cooldowns are implemented as effects (`id='cooldown'`) at `src/Skill.js:188`.
+* Cooldown state uses `state.cooldownId` for grouping in `src/Skill.js:195`.
+
+##### 7. Stacking / Uniqueness / Refresh Semantics
+
+When adding an effect with same `config.type`:
+
+* If active effect has `maxStacks` and not maxed, increment stacks and emit `effectStackAdded` in `src/EffectList.js:99`.
+* Else if active effect has `refreshes`, emit `effectRefreshed` in `src/EffectList.js:110`.
+* Else if active effect has `unique`, reject new effect (`false`) in `src/EffectList.js:119`.
+* Otherwise duplicates can coexist.
+
+Key detail:
+
+* Stack/refresh behavior does not auto-merge state or auto-reset duration. Listener code must do that explicitly.
+
+##### 8. Persistence and Hydration
+
+Serialize:
+
+* `Effect.serialize()` persists `config`, `state`, elapsed metadata, optional `skill` id in `src/Effect.js:239`.
+* Infinite duration is encoded as `"inf"` in `src/Effect.js:241`.
+* `lastTick` is stored as time-since-last-tick delta in `src/Effect.js:245`.
+
+Effect-list persistence:
+
+* `EffectList.serialize()` includes only `config.persists === true` at `src/EffectList.js:236`.
+
+Hydration:
+
+* Character hydration calls `effects.hydrate(state)` in `src/Character.js:592`.
+* For each serialized effect, factory re-creates by id then calls `effect.hydrate(...)` in `src/EffectList.js:250`.
+* If effect id is missing from factory definitions, hydration throws from `src/EffectFactory.js:64`.
+
+#### 9. High-Value Implementation Quirks (Important)
+
+* `EffectFactory.create` override leakage:
+  * `config` and `state` overrides mutate stored definition defaults (shallow merge pattern) at `src/EffectFactory.js:66`.
+  * Result: one instance override can affect future instances of same effect id.
+
+* `EffectFactory.get` is broken:
+  * It recursively calls itself (`return this.get(id)`), causing stack overflow at `src/EffectFactory.js:51`.
+
+* `active` flag is not authoritative:
+  * Effects apply modifiers even when not active/deactivated because evaluation paths do not check `effect.active` (`EffectList.evaluateAttribute` and damage evaluators).
+
+* `pause()` is partial:
+  * Paused effects are skipped for event forwarding and attribute modifiers (`src/EffectList.js:69`, `src/EffectList.js:190`).
+  * Paused effects still modify incoming/outgoing damage because those loops do not check `paused` (`src/EffectList.js:207`, `src/EffectList.js:224`).
+
+* `effectRefreshed` does not reset lifetime by default:
+  * Only event is emitted; elapsed/duration must be manually adjusted by listener.
+
+* `effectRemoved` character event has no effect argument:
+  * Emitted as `this.target.emit('effectRemoved')` in `src/EffectList.js:156`.
+
+* Script file detection is broad:
+  * Regex `/js$/` in `src/Data.js:134` matches `.js`, `.cjs`, `.mjs` suffixes.
 
 ### 6.4 Areas and world content layout (as configured by `ranvier.json`)
 
