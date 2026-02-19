@@ -366,10 +366,50 @@ The default configuration makes a strong separation:
 * **World content** (areas, rooms, NPCs, items, quests, help) is stored under `bundles/...` paths and is loaded from YAML files (or directories of YAML) via `Yaml*` datasources. ([GitHub][6]).
 * **Accounts** and **players** are stored under `data/account` and `data/player` and are loaded from JSON directories via `JsonDirectoryDataSource`. ([GitHub][6]).
 
-### 4.6 Known runtime semantics and sharp edges
+### 4.6 Area floors (current behavior)
 
-* `AreaFloor` accepts negative coordinates and currently stores coordinates using an array-backed structure indexed as `map[x][y]`. This works because arrays are objects in JavaScript, but negative coordinates are stored as signed keys rather than true array indexes. ([GitHub][27]) ([GitHub][28])
-* Room door state is not normalized on load. For a door that exists but omits `locked`, `Room.isDoorLocked(fromRoom)` returns `undefined`; if the door does not exist, it returns `false`. Consumers should treat door lock state as effectively tri-state (`true | false | undefined`). ([GitHub][29])
+`AreaFloor` accepts negative coordinates and stores floor rows in nested `Map` objects (`Map<x, Map<y, Room>>`), with low/high bounds tracked separately. ([GitHub][27]) ([GitHub][28])
+
+Note: This section is intentionally incomplete for now. It documents current coordinate storage semantics, but does not yet fully document area floor lifecycle, traversal contracts, or performance characteristics.
+
+### 4.7 Doors (engine behavior)
+
+Door state is owned by `Room` instances, not by a first-class `Door` entity type.
+
+* Door records are stored on the destination room and keyed by `fromRoom.entityReference`.
+* Missing `locked` / `closed` fields are normalized to `false` at room construction.
+* The core room API is `hasDoor`, `getDoor`, `isDoorLocked`, `openDoor`, `closeDoor`, `unlockDoor`, `lockDoor`.
+* `lockDoor` also closes the door (`closed = true`) before setting `locked = true`.
+
+Related caveats (also listed in sharp edges below):
+
+* Door routing is direction-sensitive: records are keyed by `fromRoom.entityReference` on the destination room.
+
+([GitHub][29]) ([GitHub][32])
+
+### 4.8 Item and container state (engine behavior)
+
+Item/container lock state is owned by `Item` instances directly.
+
+* Items carry `closeable`, `closed`, `locked`, and `lockedBy`.
+* There is no separate `open` field; "open" means `closed === false`.
+* The core item API is `open`, `close`, `lock`, and `unlock`.
+* `lock()` closes first (via `close()`) and then sets `locked = true`.
+* `unlock()` sets `locked = false`.
+
+Important caveats (also listed in sharp edges below):
+
+* `Item.open()` does not consult `locked`; it only checks `closed`.
+* `lockedBy` is metadata shape, not an automatically enforced key policy by core methods.
+
+([GitHub][31])
+
+### 4.9 Known runtime semantics and sharp edges
+
+* Door routing is direction-sensitive and easy to misconfigure: door records are keyed by `fromRoom.entityReference` on the destination room.
+* There is no first-class `Door` entity type; door behavior is split across room data and command/policy logic.
+* `Item.open()` does not consult `locked`; lock-gated open behavior must be enforced by command/policy code.
+* `lockedBy` is not automatically enforced by core lock/unlock/open methods.
 
 ---
 
@@ -2021,3 +2061,5 @@ Everything else—gameplay, commands, networking, event reactions—hangs off th
 [28]: https://raw.githubusercontent.com/Rantamuta/core/master/test/unit/AreaFloor.js "https://raw.githubusercontent.com/Rantamuta/core/master/test/unit/AreaFloor.js"
 [29]: https://raw.githubusercontent.com/Rantamuta/core/master/src/Room.js "https://raw.githubusercontent.com/Rantamuta/core/master/src/Room.js"
 [30]: https://raw.githubusercontent.com/Rantamuta/core/master/src/EffectFactory.js "https://raw.githubusercontent.com/Rantamuta/core/master/src/EffectFactory.js"
+[31]: https://raw.githubusercontent.com/Rantamuta/core/master/src/Item.js "https://raw.githubusercontent.com/Rantamuta/core/master/src/Item.js"
+[32]: https://raw.githubusercontent.com/Rantamuta/core/master/CHANGELOG.md "https://raw.githubusercontent.com/Rantamuta/core/master/CHANGELOG.md"
