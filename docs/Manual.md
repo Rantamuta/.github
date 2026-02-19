@@ -601,7 +601,7 @@ Within an enabled bundle directory, `BundleManager` conditionally loads features
 
 This list (and its order) is the authoritative “bundle API surface” for startup contributions.
 
-#### Quest Rewards
+#### 6.3.2 Quest Rewards
 
 Quest rewards are a registry-driven extension mechanism for post-completion quest effects. Core provides the lifecycle hooks, registration plumbing, and dispatch semantics; bundle content provides concrete reward implementations.
 
@@ -826,7 +826,7 @@ Therefore:
 11. Missing `quest-rewards/` directory is not itself an error and can hide authoring omissions until quest completion path is hit.
 12. Since reward behavior is code-driven, behavior changes are compatibility-relevant even when quest YAML is unchanged.
 
-#### Attributes
+#### 6.3.3 Attributes
 
 Attributes are one of the core gameplay state primitives in Ranvier/Rantamuta. They represent mutable character stats/resources (health, mana, stamina, favor, armor, etc.) with explicit rules for:
 
@@ -1686,7 +1686,7 @@ Constraints and sharp edges:
 
 Practical rule: if you expect copy-paste across entities, make it a behavior; if it is unique authored content, make it a script.
 
-#### Effects
+#### 6.3.7 Effects
 
 ##### 1. What Effects Are
 
@@ -1855,7 +1855,7 @@ Hydration:
 * For each serialized effect, factory re-creates by id then calls `effect.hydrate(...)` in `src/EffectList.js:250`.
 * If effect id is missing from factory definitions, hydration throws from `src/EffectFactory.js:64`.
 
-#### 9. High-Value Implementation Quirks (Important)
+##### 9. High-Value Implementation Quirks (Important)
 
 * `EffectFactory.create` override leakage:
   * `config` and `state` overrides mutate stored definition defaults (shallow merge pattern) at `src/EffectFactory.js:66`.
@@ -1879,6 +1879,123 @@ Hydration:
 
 * Script file detection is broad:
   * Regex `/js$/` in `src/Data.js:134` matches `.js`, `.cjs`, `.mjs` suffixes.
+
+#### 6.3.9 Server Events
+
+##### 1. What “server events” are
+
+1. Server events are bundle-defined listeners loaded from each bundle’s `server-events/` directory into `state.ServerEventManager`.  
+   References: `src/BundleManager.js:133`, `src/BundleManager.js:702`, `src/BundleManager.js:718`, `types/GameState.d.ts:62`.
+2. They are intended to listen to lifecycle events emitted by `GameServer` (`startup`, `shutdown`).  
+   References: `src/GameServer.js:11`, `src/GameServer.js:16`, `src/GameServer.js:22`, `src/GameServer.js:26`.
+3. `GameServer` is a plain `EventEmitter` subclass, so listeners can technically subscribe to any emitted event name, but core only defines lifecycle emits in this class.  
+   Reference: `src/GameServer.js:5`.
+
+##### 2. What they are used for
+
+1. Boot/shutdown orchestration hooks for downstream game repos (registering systems, startup init, cleanup).  
+   Reference (integration intent): `docs/NOTES.md:37`.
+2. Centralized lifecycle scripting loaded from bundles, similar in model to player events/behaviors/entity scripts, but targeted at the server emitter.  
+   References: `src/BundleManager.js:247`, `src/BundleManager.js:599`, `src/BundleManager.js:702`.
+
+##### 3. Authoring contract (actual current behavior)
+
+1. Location: `<bundle>/server-events/*.js`.  
+   References: `src/BundleManager.js:133`, `src/BundleManager.js:706`.
+2. File inclusion rule: any file in `server-events/` whose name ends with `js` and is a file passes loader filter (`/js$/`).  
+   Reference: `src/Data.js:132`.
+3. Export shape after normalization must contain `.listeners`, where each key is an event name and each value is a factory function.  
+   References: `src/BundleManager.js:715`, `src/BundleManager.js:717`, `src/BundleManager.js:718`.
+4. Each listener factory is called at load time with `state`, and its return value is the runtime listener function registered into `ServerEventManager`.  
+   Reference: `src/BundleManager.js:718`.
+5. Legacy module style is supported: exporting a function loader is allowed via `_getLoader(loader, srcPath)`.  
+   References: `src/BundleManager.js:714`, `src/BundleManager.js:715`, `src/BundleManager.js:732`.
+
+##### 4. Load lifecycle and order
+
+1. Bundle load order comes from `Config.get('bundles')`; duplicates in config are skipped via `seenBundles`.  
+   References: `src/BundleManager.js:53`, `src/BundleManager.js:57`, `src/BundleManager.js:58`.
+2. Within each bundle, feature load order includes `input-events/`, then `server-events/`, then `player-events.js`.  
+   Reference: `src/BundleManager.js:132`.
+3. `server-events/` is loaded only if directory exists; missing directory is silently ignored.  
+   References: `src/BundleManager.js:140`, `src/BundleManager.js:141`.
+4. Files in `server-events/` are iterated with `fs.readdirSync`; code does not explicitly sort.  
+   References: `src/BundleManager.js:704`, `src/BundleManager.js:706`.
+
+##### 5. Runtime wiring model
+
+1. `loadServerEvents` only populates `ServerEventManager`; it does not attach listeners directly to `GameServer`.  
+   References: `src/BundleManager.js:717`, `src/BundleManager.js:718`.
+2. Actual binding happens through `EventManager.attach(emitter)`.  
+   Reference: `src/EventManager.js:40`.
+3. `attach` binds listener `this` to the emitter using `listener.bind(emitter)`.  
+   Reference: `src/EventManager.js:46`.
+4. For server events, listeners typically run with `this === GameServer`, and receive event payload args (`commander` for startup, none for shutdown).  
+   References: `src/GameServer.js:16`, `src/GameServer.js:26`.
+5. The core repo does not contain bootstrap code that calls `ServerEventManager.attach(GameServer)`; that wiring is expected in embedding/downstream runtime composition.
+
+##### 6. Features and semantics
+
+1. Many-to-one aggregation: multiple bundles/files can add listeners to same event.
+2. Dedup is by function identity because listeners are stored in `Set`.  
+   Reference: `src/EventManager.js:30`.
+3. Listener ordering is insertion order of `Map`/`Set` plus source iteration order.
+4. Listener factories are state-aware and evaluated once at load time (factory pattern).
+5. Reusable event infra: same `EventManager` API used across server events, player events, behaviors, effects.  
+   References: `src/PlayerManager.js:21`, `src/BehaviorManager.js:38`, `src/EffectFactory.js:34`.
+
+##### 7. Important edge cases and failure modes
+
+1. `loadServerEvents` has no shape validation equivalent to input-events validation.  
+   Contrast references: `src/BundleManager.js:581`, `src/BundleManager.js:702`.
+2. Missing `.listeners` causes `Object.entries(undefined)` failure at load.
+3. Non-function listener entry fails at load when called as `listener(this.state)`.
+4. Factory returning non-function fails later during `attach` (`listener.bind`).
+5. Strict mode duplicate detection is not applied to server events (`_registerOrThrow` is never called from `loadServerEvents`).  
+   References: `src/BundleManager.js:702`, `src/BundleManager.js:755`.
+6. Re-attaching the same manager to same emitter duplicates active handlers because each `bind` creates a new function.
+7. `detach` is broad and removes all listeners for an event name, including listeners not owned by this manager.  
+   References: `src/EventManager.js:57`, `src/EventManager.js:73`, `docs/NOTES.md:80`.
+8. Startup/shutdown emits are synchronous; thrown listener errors bubble to caller (no guard in `GameServer`).
+
+##### 8. Empirical probe results I ran locally
+
+1. Valid lifecycle listener receives startup commander arg and `this` bound to `GameServer`.
+2. Invalid module shapes produced:
+   * missing listeners: `Cannot convert undefined or null to object`
+   * listener entry not function: `listener is not a function`
+   * factory returns non-function: `listener.bind is not a function`
+3. With `strictMode = true`, duplicate `startup` listeners from two bundles both load (no strict conflict).
+4. Calling `attach` twice results in duplicate listener invocation.
+5. Factory functions are executed at load time once per load pass (not on each emit).
+
+##### 9. Relationship to docs/proposals and coverage
+
+1. No dedicated server-event unit tests currently in `test/unit`.
+2. There is explicit TODO to add GameServer event contract tests and EventManager attach/detach tests.  
+   References: `README.md:67`, `README.md:92`.
+3. “First-class script exports” is proposal-only (`Status: Proposed`), not current runtime behavior; current server events still use `.listeners` map contract.  
+   References: `docs/proposals/FIRST_CLASS_SCRIPT_EXPORTS.md:3`, `docs/proposals/FIRST_CLASS_SCRIPT_EXPORTS.md:55`.
+
+##### 10. Practical “known-good” server-event template
+
+```js
+// <bundle>/server-events/lifecycle.js
+module.exports = {
+  listeners: {
+    startup: state => function onStartup(commander) {
+      // this === GameServer
+      // state is captured from load time
+    },
+
+    shutdown: state => function onShutdown() {
+      // cleanup
+    },
+  },
+};
+```
+
+If you want, I can also generate a follow-up document that enumerates a hardened contract and test plan specifically for `loadServerEvents` (validation, strict-mode duplicate policy, deterministic ordering, and attach lifecycle tests).
 
 ### 6.4 Areas and world content layout (as configured by `ranvier.json`)
 
