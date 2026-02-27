@@ -2094,6 +2094,43 @@ Hydration:
 * Script file detection is broad:
   * Regex `/js$/` in `src/Data.js:134` matches `.js`, `.cjs`, `.mjs` suffixes.
 
+#### 6.3.8 Mutation ops
+
+A mutation op is a declarative instruction applied during command/script mutation execution to change world state in a controlled way.
+
+Purpose:
+
+* Keep state changes explicit and deterministic in the mutator flow.
+* Support rollback when a later mutation in the same plan fails.
+* Keep predicates/query helpers read-only by moving writes into the mutation phase.
+
+##### `bundle-rantamuta` mutation op: `setRoomFlag`
+
+`bundle-rantamuta` command plans support a room-flag mutation instruction for deterministic room-state toggles used by predicates and description rendering.
+
+Instruction shape:
+
+```js
+{
+  type: 'setRoomFlag',
+  roomRef: 'area:roomId',
+  key: 'flagName',
+  value: true
+}
+```
+
+Behavior:
+
+* Resolves `roomRef` through `RoomManager`.
+* Writes boolean `value` to `room.metadata.flags[key]`.
+* Returns an inverse operation for rollback if a later mutation in the same plan fails.
+* Is intended for command/script mutation phase, not predicate execution.
+
+Read path pairing:
+
+* Predicates should read these values with `q.roomFlag(roomRef, key)`.
+* Predicates remain read-only and must never mutate world state directly.
+
 #### 6.3.9 Server Events
 
 ##### 1. What “server events” are
